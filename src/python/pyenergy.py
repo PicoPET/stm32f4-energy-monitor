@@ -34,7 +34,7 @@ class EnergyMonitor(object):
     newestVersion = 10
     baseVersion = 10
 
-    def __init__(self, serial="EE00"):
+    def __init__(self, serial=''.join (map (lambda c: chr(c), [ 0x60, 0x78, 0x86, 0x42]))):
         # Find the usb device that corresponds to the serial number
         devs = usb.core.find(idVendor=0xf539, idProduct=0xf539, find_all = True)
 
@@ -47,6 +47,7 @@ class EnergyMonitor(object):
                 continue
 
             s = self.getSerial(d)
+            print "Current device = " + ':'.join (map (lambda l: '{:#x}'.format(ord(l[0])), list(s))) + ' ({:d} characters)' . format (len (s))
 
             if s == serial:
                 sdevs.append(d)
@@ -62,7 +63,7 @@ class EnergyMonitor(object):
         self.dev = devs[0]
 
         # Set up default parameters for each measurement point
-        defaultparams = {'resistor':1, 'gain':50, 'vref':3}
+        defaultparams = {'resistor':0.05, 'gain':50, 'vref':2.98}
         self.measurement_params = {i : copy(defaultparams) for i in [1,2,3]}
 
         # Measurement point 4 is the 'self' measurement point
