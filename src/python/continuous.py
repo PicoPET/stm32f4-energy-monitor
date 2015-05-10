@@ -5,7 +5,7 @@
 import pyenergy
 from time import sleep
 
-em = pyenergy.EnergyMonitor("EE00")
+em = pyenergy.EnergyMonitor()
 em.connect()
 
 em.enableMeasurementPoint(1)

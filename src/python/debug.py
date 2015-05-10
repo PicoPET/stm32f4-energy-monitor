@@ -18,7 +18,7 @@ for arg in sys.argv[1:]:
     except TypeError:
         print "Expected integer measurement point number, got:",arg
 
-em = pyenergy.EnergyMonitor("EE00")
+em = pyenergy.EnergyMonitor()
 em.connect()
 
 for m in m_points:

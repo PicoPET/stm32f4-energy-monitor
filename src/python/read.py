@@ -17,8 +17,9 @@ def prettyPrint(v):
 
 
 # Find and connect to the board
-em = pyenergy.EnergyMonitor("EE00")
+em = pyenergy.EnergyMonitor()
 em.connect()
+print 'Connected'
 
 # Enable measurement point 1 and set PA0 as the trigger (blue button)
 em.enableMeasurementPoint(1)
