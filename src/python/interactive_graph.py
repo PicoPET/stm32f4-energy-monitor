@@ -386,8 +386,9 @@ class Graph(QMainWindow):
                         disabled_tref = mp
 
             if bool(sum(state[mp][1:4])) or stateChange:
-                m = self.em.getInstantaneous(i+1)
-                measurements[mp] = m
+                measurements[mp] = self.em.getInstantaneous(i+1)
+                # self.em.debugInstantaneous(m)
+                # measurements[mp] = m
 
                 if first_on is None and mp != disabled_tref:
                     first_on = mp
@@ -433,7 +434,7 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle("plastique")
 
-    em = pyenergy.EnergyMonitor("EE00")
+    em = pyenergy.EnergyMonitor()
     em.connect()
 
     form = Graph(em)
