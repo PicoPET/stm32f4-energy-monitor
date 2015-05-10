@@ -1,4 +1,8 @@
 #include <stdlib.h>
+#include <stdint.h>
+typedef uint32_t bool;
+#include <libopencm3/cm3/common.h>
+#include <libopencm3/stm32/f4/memorymap.h>
 #include <libopencm3/stm32/f4/rcc.h>
 #include <libopencm3/stm32/f4/gpio.h>
 #include <libopencm3/stm32/f4/adc.h>
