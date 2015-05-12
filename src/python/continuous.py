@@ -16,4 +16,4 @@ while True:
     m = em.getMeasurement()
 
     print "{}, {}, {}, {}, {}, {}".format(m.energy, m.time, m.energy/m.time, m.peak_power, m.avg_current, m.avg_voltage)
-    sleep(0.1)
+    sleep(0.01)
