@@ -11,9 +11,13 @@ em.connect()
 em.enableMeasurementPoint(1)
 em.start()
 
-print "energy, time, power, peak_power, peak_current, peak_voltage"
+print "time, voltage, current"
 while True:
-    m = em.getMeasurement()
+    v = em.getInstantaneous(1)
+    mp = v[5]
+    resistor = em.measurement_params[mp]['resistor']
+    gain = em.measurement_params[mp]['gain']
+    vref = em.measurement_params[mp]['vref']
 
-    print "{}, {}, {}, {}, {}, {}".format(m.energy, m.time, m.energy/m.time, m.peak_power, m.avg_current, m.avg_voltage)
-    sleep(0.01)
+    print "{}, {}, {}".format(v[4] * 2. / 168000000 * 2, float(vref) / 4096. * v[2] * 2, float(vref) / gain / resistor / 4096. * v[3])
+    sleep(0.0001) # Value 0.0001 (100 µs) yields 1kHz measurement rate.
