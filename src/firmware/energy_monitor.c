@@ -1,18 +1,20 @@
 #include <stdlib.h>
 #include <stdint.h>
 typedef uint32_t bool;
+#define STM32F4
 #include <libopencm3/cm3/common.h>
-#include <libopencm3/stm32/f4/memorymap.h>
-#include <libopencm3/stm32/f4/rcc.h>
-#include <libopencm3/stm32/f4/gpio.h>
-#include <libopencm3/stm32/f4/adc.h>
+#include <libopencm3/stm32/memorymap.h>
+#include <libopencm3/stm32/rcc.h>
+#include <libopencm3/stm32/gpio.h>
+#include <libopencm3/stm32/adc.h>
+#include <libopencm3/stm32/spi.h>
 #include <libopencm3/stm32/timer.h>
 #include <libopencm3/usb/usbd.h>
 #include <libopencm3/usb/cdc.h>
 #include <libopencm3/cm3/scb.h>
 #include <libopencm3/cm3/nvic.h>
-#include <libopencm3/stm32/f4/dma.h>
-#include <libopencm3/stm32/f4/flash.h>
+#include <libopencm3/stm32/dma.h>
+#include <libopencm3/stm32/flash.h>
 #include <libopencm3/stm32/exti.h>
 #include <libopencm3/stm32/pwr.h>
 
@@ -127,7 +129,8 @@ typedef struct {
     uint64_t current_time;
 } instant_data;
 
-int tperiod=500;
+/* Sample at 100 kS/s.  */
+int tperiod=168000000/10000;
 
 typedef struct {
     accumulated_data accum_data;
@@ -505,6 +508,68 @@ void timer_setup()
     timer_enable_counter(TIM2);
 }
 
+/* Set up the SPI.  Pin assignment: use plain alternate function 5:
+    - SPI1_NSS: PA4
+    - SPI1_SCK: PA5
+    - SPI1_MISO: PA6
+    - SPI1_MOSI: PA7.  */
+void spi_setup ()
+{
+    gpio_toggle(GPIOD, GPIO15);
+    /* Set up GPIOA ports 4, 5, 6 and 7:
+        - speed 50 MHz
+	- pullup-pulldown (as opposed to open-drain)
+	- no pull-up/pull-down direction
+	- alternate function #5 (SPI1/SPI2/I2S2/I2S2ext)
+	*/
+    gpio_mode_setup (GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO4 | GPIO5 | GPIO7);
+    gpio_mode_setup (GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO6);
+    /* Do not set ouput options on pin PA6 - it's an input.  */
+    gpio_set_output_options (GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, GPIO4 | GPIO5 | GPIO7);
+    gpio_set_af (GPIOA, GPIO_AF5, GPIO4 | GPIO5 | GPIO6 | GPIO7);
+
+    /* Disable SPI1 peripheral.  */
+    spi_disable (SPI1);
+
+    /* Reset SPI1 peripheral.  */
+    rcc_peripheral_reset(&RCC_APB2ENR, RCC_APB2RSTR_SPI1RST);
+
+    /* Explicitly disable I2S in favour of SPI operation */
+    SPI1_I2SCFGR = 0;
+
+    /* SPI1: disable CRC.  */
+    spi_disable_crc(SPI1);
+
+    /* Init master on SPI1:
+	- baudrate 1/16 the maximum (84/16 == 5.250 Mbaud)
+	- pull clock high when idle
+	- make data stable on rising edge of clock (transition #2)
+	- send 8-bit frames
+	- send data in MSBit-first order.
+	*/
+    spi_init_master (SPI1, SPI_CR1_BAUDRATE_FPCLK_DIV_16,
+		     /* Clock polarity: pull clock high for the peripheral device.  */
+		     SPI_CR1_CPOL_CLK_TO_1_WHEN_IDLE,
+		     /* CPHA: Clock phase: read on rising edge of clock.  */
+		     SPI_CR1_CPHA_CLK_TRANSITION_1,
+		     /* DFF: Data frame format (8 or 16 bit): 16 bit.  */
+		     SPI_CR1_DFF_16BIT,
+		     /* Most or Least Sig Bit First: MSB first. */
+		     SPI_CR1_MSBFIRST);
+
+    spi_disable_software_slave_management(SPI1);
+    /* Pull /SS high (slave not selected).  */
+    /* spi_set_nss_high(SPI1);  */
+    spi_enable_ss_output (SPI1);
+
+    /* Clean up status information.  */
+    /* spi_clear_mode_fault(SPI1);  */
+
+    /* Enable SPI1 peripheral.  */
+    spi_enable(SPI1);
+    gpio_toggle(GPIOD, GPIO15);
+}
+
 void adc_setup()
 {
     gpio_mode_setup(GPIOA, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO1 | GPIO2 | GPIO3);
@@ -660,9 +725,15 @@ int main(void)
     rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_IOPCEN);
     rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_IOPDEN);
     rcc_peripheral_enable_clock(&RCC_AHB2ENR, RCC_AHB2ENR_OTGFSEN);
+    /* Enable SPI clock.  */
+    rcc_peripheral_enable_clock (&RCC_APB2ENR,
+				 /* SPI 1 */
+				 RCC_APB2ENR_SPI1EN);
+
 
     // First want to check our serial. If not set, set it
-    if(serial_str[0] == 0xFF && serial_str[1] == 0xFF && serial_str[2] == 0xFF && serial_str[3] == 0xFF)
+    //if(serial_str[0] == 0xFF && serial_str[1] == 0xFF && serial_str[2] == 0xFF && serial_str[3] == 0xFF)
+    if (serial_str[0] != 'E' || serial_str[1] != 'E' || serial_str[2] != '0' || serial_str[3] != '0')
     {
         flash_serial('E', 'E', '0', '0');
     }
@@ -693,6 +764,7 @@ int main(void)
 
     // dma_setup();
     adc_setup();
+    spi_setup ();
     timer_setup();
     exti_timer_setup();
 
@@ -810,6 +882,32 @@ void adc_isr()
                 unsigned short c = mp->lastI;
                 unsigned short v = mp->lastV;
                 unsigned p = c*v;
+
+		gpio_toggle(GPIOD, GPIO15);
+		gpio_toggle(GPIOD, GPIO12);
+
+		/* Select the SPI slave.  */
+//		spi_set_nss_low (SPI1);
+
+		/* Send the SPI data:
+		    - magic: 0xb00f
+		    - port
+		    - current
+		    - voltage
+		   in that order.
+
+		   Use blocking calls to prevent overwrites of SPI data reg.  */
+		spi_write (SPI1, 0xb00f);
+#if 0
+		spi_send (SPI1, (unsigned short) i);
+		spi_send (SPI1, c);
+		spi_send (SPI1, v);
+#endif
+		gpio_toggle(GPIOD, GPIO15);
+
+		/* Deselect the SPI slave.  */
+//		spi_set_nss_high (SPI1);
+		gpio_toggle(GPIOD, GPIO12);
 
                 a_data->energy_accum += p;
 

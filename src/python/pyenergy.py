@@ -34,7 +34,7 @@ class EnergyMonitor(object):
     newestVersion = 10
     baseVersion = 10
 
-    def __init__(self, serial=''.join (map (lambda c: chr(c), [ 0x60, 0x78, 0x86, 0x42]))):
+    def __init__(self, serial='EE00'): #, serial=''.join (map (lambda c: chr(c), [ 0x60, 0x78, 0x86, 0x42]))):
         # Find the usb device that corresponds to the serial number
         devs = usb.core.find(idVendor=0xf539, idProduct=0xf539, find_all = True)
 
