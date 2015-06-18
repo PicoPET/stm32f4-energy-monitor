@@ -547,7 +547,7 @@ void spi_setup ()
 	- send 8-bit frames
 	- send data in MSBit-first order.
 	*/
-    spi_init_master (SPI1, SPI_CR1_BAUDRATE_FPCLK_DIV_16,
+    spi_init_master (SPI1, SPI_CR1_BAUDRATE_FPCLK_DIV_2,
 		     /* Clock polarity: pull clock high for the peripheral device.  */
 		     SPI_CR1_CPOL_CLK_TO_1_WHEN_IDLE,
 		     /* CPHA: Clock phase: read on rising edge of clock.  */
