@@ -541,9 +541,9 @@ void spi_setup ()
     spi_disable_crc(SPI1);
 
     /* Init master on SPI1:
-	- baudrate 1/16 the maximum (84/16 == 5.250 Mbaud)
+	- baudrate 1/2 the maximum (84/2 == 42 Mbaud)
 	- pull clock high when idle
-	- make data stable on rising edge of clock (transition #2)
+	- make data stable on falling edge of clock (transition #1)
 	- send 8-bit frames
 	- send data in MSBit-first order.
 	*/
@@ -557,7 +557,8 @@ void spi_setup ()
 		     /* Most or Least Sig Bit First: MSB first. */
 		     SPI_CR1_MSBFIRST);
 
-    spi_disable_software_slave_management(SPI1);
+    //spi_enable_software_slave_management(SPI1);
+    spi_disable_software_slave_management (SPI1);
     /* Pull /SS high (slave not selected).  */
     /* spi_set_nss_high(SPI1);  */
     spi_enable_ss_output (SPI1);
@@ -568,6 +569,189 @@ void spi_setup ()
     /* Enable SPI1 peripheral.  */
     spi_enable(SPI1);
     gpio_toggle(GPIOD, GPIO15);
+}
+
+static void dma_int_enable(void)
+{
+    /* SPI1 RX on DMA2 Channel 2 */
+    nvic_set_priority(NVIC_DMA2_STREAM2_IRQ, 0);
+    nvic_enable_irq(NVIC_DMA2_STREAM2_IRQ);
+    /* SPI1 TX on DMA2 Channel 3 */
+    nvic_set_priority(NVIC_DMA2_STREAM3_IRQ, 0);
+    nvic_enable_irq(NVIC_DMA2_STREAM3_IRQ);
+}
+
+/* Set up DMA2.  */
+void dma_setup(void)
+{
+    rcc_periph_clock_enable (RCC_DMA2);
+
+    /* Disable DMA streams.  */
+    dma_disable_stream (DMA2, DMA_STREAM2);
+    dma_disable_stream (DMA2, DMA_STREAM3);
+
+    /* Reset DMA streams.  */
+    dma_stream_reset(DMA2, DMA_STREAM2);
+    dma_stream_reset(DMA2, DMA_STREAM3);
+}
+
+/* Use 16-bit xfers.  */
+#define USE_16BIT_TRANSFERS
+
+/* Asssume "previous" transfers both completed.  */
+unsigned int transceive_status = 2;
+
+int16_t dummy_rx_buf;
+
+#ifdef USE_16BIT_TRANSFERS
+static int spi_dma_transceive(const uint16_t *tx_buf, int tx_len, uint16_t *rx_buf, int rx_len)
+#else
+static int spi_dma_transceive(const uint8_t *tx_buf, int tx_len, uint8_t *rx_buf, int rx_len)
+#endif
+{
+	gpio_toggle (GPIOD, GPIO12);
+	/* Check for 0 length in both tx and rx */
+	if ((rx_len < 1) && (tx_len < 1)) {
+		/* return -1 as error */
+		gpio_toggle (GPIOD, GPIO12);
+		return -1;
+	}
+
+#if 0
+	/* Reset SPI data and status registers.
+	 * Here we assume that the SPI peripheral is NOT
+	 * busy any longer, i.e. the last activity was verified
+	 * complete elsewhere in the program.
+	 */
+	volatile uint8_t temp_data __attribute__ ((unused));
+	while (SPI_SR(SPI1) & (SPI_SR_RXNE | SPI_SR_OVR)) {
+		temp_data = SPI_DR(SPI0);
+	}
+#endif
+
+	gpio_toggle (GPIOD, GPIO15);
+	//spi_set_nss_low (SPI1);
+	/* Reset status flag appropriately (both 0 case caught above) */
+	transceive_status = 0;
+	if (rx_len < 1) {
+		transceive_status = 1;
+	}
+	if (tx_len < 1) {
+		transceive_status = 1;
+	}
+
+	/* Disable streams prior to stream programming.  */
+	dma_disable_stream (DMA2, DMA_STREAM2);
+	dma_disable_stream (DMA2, DMA_STREAM3);
+
+	/* Set up rx dma, note it has higher priority to avoid overrun */
+	if (rx_len > 0) {
+		dma_set_peripheral_address(DMA2, DMA_STREAM2, (uint32_t)&SPI1_DR);
+		dma_set_memory_address(DMA2, DMA_STREAM2, (uint32_t)rx_buf);
+		dma_set_number_of_data(DMA2, DMA_STREAM2, rx_len);
+#ifdef USE_16BIT_TRANSFERS
+		dma_set_peripheral_size(DMA2, DMA_STREAM2, DMA_SxCR_PSIZE_16BIT);
+		dma_set_memory_size(DMA2, DMA_STREAM2, DMA_SxCR_MSIZE_16BIT);
+#else
+		dma_set_peripheral_size(DMA2, DMA_STREAM2, DMA_SxCR_PSIZE_8BIT);
+		dma_set_memory_size(DMA2, DMA_STREAM2, DMA_SxCR_MSIZE_8BIT);
+#endif
+		dma_enable_memory_increment_mode(DMA2, DMA_STREAM2);
+		dma_channel_select (DMA2, DMA_STREAM2, DMA_SxCR_CHSEL_3);
+		dma_set_transfer_mode (DMA2, DMA_STREAM2, DMA_SxCR_DIR_PERIPHERAL_TO_MEM);
+		dma_set_priority(DMA2, DMA_STREAM2, DMA_SxCR_PL_VERY_HIGH);
+	}
+
+	/* Set up tx dma */
+	if (tx_len > 0) {
+		dma_set_peripheral_address(DMA2, DMA_STREAM3, (uint32_t)&SPI1_DR);
+		dma_set_memory_address(DMA2, DMA_STREAM3, (uint32_t)tx_buf);
+		dma_set_number_of_data(DMA2, DMA_STREAM3, tx_len);
+#ifdef USE_16BIT_TRANSFERS
+		dma_set_peripheral_size(DMA2, DMA_STREAM3, DMA_SxCR_PSIZE_16BIT);
+		dma_set_memory_size(DMA2, DMA_STREAM3, DMA_SxCR_MSIZE_16BIT);
+#else
+		dma_set_peripheral_size(DMA2, DMA_STREAM3, DMA_SxCR_PSIZE_8BIT);
+		dma_set_memory_size(DMA2, DMA_STREAM3, DMA_SxCR_MSIZE_8BIT);
+#endif
+		dma_enable_memory_increment_mode(DMA2, DMA_STREAM3);
+		dma_channel_select (DMA2, DMA_STREAM2, DMA_SxCR_CHSEL_3);
+		dma_set_transfer_mode (DMA2, DMA_STREAM3, DMA_SxCR_DIR_MEM_TO_PERIPHERAL);
+		dma_set_priority(DMA2, DMA_STREAM3, DMA_SxCR_PL_HIGH);
+	}
+
+	gpio_toggle (GPIOD, GPIO15);
+
+	/* Enable dma transfer complete interrupts */
+	if (rx_len > 0) {
+		dma_enable_transfer_complete_interrupt(DMA2, DMA_STREAM2);
+	}
+	if (tx_len > 0) {
+		dma_enable_transfer_complete_interrupt(DMA2, DMA_STREAM3);
+	}
+
+	/* Activate dma streams */
+	if (rx_len > 0) {
+		dma_enable_stream (DMA2, DMA_STREAM2);
+	}
+	if (tx_len > 0) {
+		dma_enable_stream (DMA2, DMA_STREAM3);
+	}
+
+	/* Enable the spi transfer via dma
+	 * This will immediately start the transmission,
+	 * after which when the receive is complete, the
+	 * receive dma will activate
+	 */
+	if (rx_len > 0) {
+		spi_enable_rx_dma(SPI1);
+	}
+	if (tx_len > 0) {
+		spi_enable_tx_dma(SPI1);
+	}
+
+	gpio_toggle (GPIOD, GPIO12);
+	return 0;
+}
+
+/* SPI receive completed with DMA */
+void dma2_stream2_isr(void)
+{
+	// gpio_set(GPIOA,GPIO4);
+	if ((DMA2_LISR &DMA_LISR_TCIF2) != 0) {
+		DMA2_LIFCR |= DMA_LIFCR_CTCIF2;
+	}
+
+	dma_disable_transfer_complete_interrupt(DMA2, DMA_STREAM2);
+
+	spi_disable_rx_dma(SPI1);
+
+	dma_disable_stream(DMA2, DMA_STREAM2);
+
+	/* Increment the status to indicate one of the transfers is complete */
+	transceive_status++;
+	// gpio_clear(GPIOA,GPIO4);
+}
+
+/* SPI transmit completed with DMA */
+void dma2_stream3_isr(void)
+{
+	//gpio_set(GPIOB,GPIO1);
+	if ((DMA2_LISR &DMA_LISR_TCIF3) != 0) {
+		DMA2_LIFCR |= DMA_LIFCR_CTCIF3;
+	}
+
+	dma_disable_transfer_complete_interrupt(DMA2, DMA_STREAM3);
+
+	spi_disable_tx_dma (SPI1);
+
+	dma_disable_stream (DMA2, DMA_STREAM3);
+
+	//spi_set_nss_high (SPI1);
+
+	/* Increment the status to indicate one of the transfers is complete */
+	transceive_status++;
+	//gpio_clear(GPIOB,GPIO1);
 }
 
 void adc_setup()
@@ -725,6 +909,9 @@ int main(void)
     rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_IOPCEN);
     rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_IOPDEN);
     rcc_peripheral_enable_clock(&RCC_AHB2ENR, RCC_AHB2ENR_OTGFSEN);
+
+    /* Enable DMA clock.  */
+    rcc_periph_clock_enable (RCC_DMA2);
     /* Enable SPI clock.  */
     rcc_peripheral_enable_clock (&RCC_APB2ENR,
 				 /* SPI 1 */
@@ -762,7 +949,7 @@ int main(void)
     m_points[3].chans[1] = 14;
 
 
-    // dma_setup();
+    dma_setup();
     adc_setup();
     spi_setup ();
     timer_setup();
@@ -837,6 +1024,9 @@ void exit(int a)
     while(1);
 }
 
+/* Tx buffer for testing. */
+const uint16_t tx_buffer[8] = { 0x1234, 0xa5a5, 0x1f1f, 0xb00b, 0xdead, 0xbeef, 0xc1fc, 0xcf1c };
+
 void adc_isr()
 {
     int m_point;
@@ -897,7 +1087,15 @@ void adc_isr()
 		   in that order.
 
 		   Use blocking calls to prevent overwrites of SPI data reg.  */
-		spi_write (SPI1, 0xb00f);
+//		spi_write (SPI1, 0xb00f);
+		/* Send the predefined buffer on SPI using DMA.  */
+		//if (transceive_status == 2)
+		{
+		  /* Both previous transfers completed (either could be fake)
+		     or initial round.  */
+		  transceive_status = 0;
+		  spi_dma_transceive (tx_buffer, 8, &dummy_rx_buf, 0);
+		}
 #if 0
 		spi_send (SPI1, (unsigned short) i);
 		spi_send (SPI1, c);
