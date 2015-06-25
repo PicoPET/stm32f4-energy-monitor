@@ -640,15 +640,32 @@ static int spi_dma_transceive(const uint8_t *tx_buf, int tx_len, uint8_t *rx_buf
 		transceive_status = 1;
 	}
 
-	/* Disable streams prior to stream programming.  */
+	/* RM0090 10.3.17(1): If the stream is enabled, disable it.
+	   Disable streams prior to stream programming.  */
 	dma_disable_stream (DMA2, DMA_STREAM2);
 	dma_disable_stream (DMA2, DMA_STREAM3);
 
 	/* Set up rx dma, note it has higher priority to avoid overrun */
 	if (rx_len > 0) {
+		/* 10.3.17(2): Set the peripheral port register address.  */
 		dma_set_peripheral_address(DMA2, DMA_STREAM2, (uint32_t)&SPI1_DR);
+		/* 10.3.17(3): Set the memory address.  */
 		dma_set_memory_address(DMA2, DMA_STREAM2, (uint32_t)rx_buf);
+		/* 10.3.17(4): Configure the total number of data items to be transferred.  */
 		dma_set_number_of_data(DMA2, DMA_STREAM2, rx_len);
+		/* 10.3.17(5): Select the DMA channel (request).  */
+		dma_channel_select (DMA2, DMA_STREAM2, DMA_SxCR_CHSEL_3);
+		/* 10.3.17(6): If the peripheral is intended to be the flow controller... */
+		/* 10.3.17(7): Configure the stream priority.  */
+		dma_set_priority(DMA2, DMA_STREAM2, DMA_SxCR_PL_VERY_HIGH);
+		/* 10.3.17(8): Configure the FIFO usage.  */
+		/* 10.3.17(9): Configure the data transfer direction...  */
+		dma_set_transfer_mode (DMA2, DMA_STREAM2, DMA_SxCR_DIR_PERIPHERAL_TO_MEM);
+		/* 10.3.17(9): ...peripheral and memory incremented/fixed mode,
+				  single or burst transactions, peripheral
+				  and memory data widths, Circular mode,
+				  Double buffer mode and interrupts after
+				  half and/or full transfer, and/or errors.*/
 #ifdef USE_16BIT_TRANSFERS
 		dma_set_peripheral_size(DMA2, DMA_STREAM2, DMA_SxCR_PSIZE_16BIT);
 		dma_set_memory_size(DMA2, DMA_STREAM2, DMA_SxCR_MSIZE_16BIT);
@@ -657,16 +674,29 @@ static int spi_dma_transceive(const uint8_t *tx_buf, int tx_len, uint8_t *rx_buf
 		dma_set_memory_size(DMA2, DMA_STREAM2, DMA_SxCR_MSIZE_8BIT);
 #endif
 		dma_enable_memory_increment_mode(DMA2, DMA_STREAM2);
-		dma_channel_select (DMA2, DMA_STREAM2, DMA_SxCR_CHSEL_3);
-		dma_set_transfer_mode (DMA2, DMA_STREAM2, DMA_SxCR_DIR_PERIPHERAL_TO_MEM);
-		dma_set_priority(DMA2, DMA_STREAM2, DMA_SxCR_PL_VERY_HIGH);
 	}
 
 	/* Set up tx dma */
 	if (tx_len > 0) {
+		/* 10.3.17(2): Set the peripheral port register address.  */
 		dma_set_peripheral_address(DMA2, DMA_STREAM3, (uint32_t)&SPI1_DR);
+		/* 10.3.17(3): Set the memory address.  */
 		dma_set_memory_address(DMA2, DMA_STREAM3, (uint32_t)tx_buf);
+		/* 10.3.17(4): Configure the total number of data items to be transferred.  */
 		dma_set_number_of_data(DMA2, DMA_STREAM3, tx_len);
+		/* 10.3.17(5): Select the DMA channel (request).  */
+		dma_channel_select (DMA2, DMA_STREAM3, DMA_SxCR_CHSEL_3);
+		/* 10.3.17(6): If the peripheral is intended to be the flow controller... */
+		/* 10.3.17(7): Configure the stream priority.  */
+		dma_set_priority(DMA2, DMA_STREAM3, DMA_SxCR_PL_HIGH);
+		/* 10.3.17(8): Configure the FIFO usage.  */
+		/* 10.3.17(9): Configure the data transfer direction...  */
+		dma_set_transfer_mode (DMA2, DMA_STREAM3, DMA_SxCR_DIR_MEM_TO_PERIPHERAL);
+		/* 10.3.17(9): ...peripheral and memory incremented/fixed mode,
+				  single or burst transactions, peripheral
+				  and memory data widths, Circular mode,
+				  Double buffer mode and interrupts after
+				  half and/or full transfer, and/or errors.*/
 #ifdef USE_16BIT_TRANSFERS
 		dma_set_peripheral_size(DMA2, DMA_STREAM3, DMA_SxCR_PSIZE_16BIT);
 		dma_set_memory_size(DMA2, DMA_STREAM3, DMA_SxCR_MSIZE_16BIT);
@@ -675,9 +705,6 @@ static int spi_dma_transceive(const uint8_t *tx_buf, int tx_len, uint8_t *rx_buf
 		dma_set_memory_size(DMA2, DMA_STREAM3, DMA_SxCR_MSIZE_8BIT);
 #endif
 		dma_enable_memory_increment_mode(DMA2, DMA_STREAM3);
-		dma_channel_select (DMA2, DMA_STREAM2, DMA_SxCR_CHSEL_3);
-		dma_set_transfer_mode (DMA2, DMA_STREAM3, DMA_SxCR_DIR_MEM_TO_PERIPHERAL);
-		dma_set_priority(DMA2, DMA_STREAM3, DMA_SxCR_PL_HIGH);
 	}
 
 	gpio_toggle (GPIOD, GPIO15);
@@ -690,7 +717,7 @@ static int spi_dma_transceive(const uint8_t *tx_buf, int tx_len, uint8_t *rx_buf
 		dma_enable_transfer_complete_interrupt(DMA2, DMA_STREAM3);
 	}
 
-	/* Activate dma streams */
+	/* 10.3.17(10): Activate the stream(s).  */
 	if (rx_len > 0) {
 		dma_enable_stream (DMA2, DMA_STREAM2);
 	}
