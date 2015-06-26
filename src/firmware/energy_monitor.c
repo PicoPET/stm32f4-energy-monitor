@@ -737,7 +737,7 @@ static int spi_dma_transceive(const uint8_t *tx_buf, int tx_len, uint8_t *rx_buf
 		spi_enable_tx_dma(SPI1);
 	}
 
-	gpio_toggle (GPIOD, GPIO12);
+	/*  gpio_toggle (GPIOD, GPIO12);  */
 	return 0;
 }
 
@@ -757,7 +757,12 @@ void dma2_stream2_isr(void)
 
 	/* Increment the status to indicate one of the transfers is complete */
 	transceive_status++;
-	// gpio_clear(GPIOA,GPIO4);
+
+	/* Mark end of transmission once all transfers are complete.  */
+	if (transceive_status == 2)
+		gpio_toggle (GPIOD, GPIO12);
+
+	/* gpio_clear(GPIOA,GPIO4);  */
 }
 
 /* SPI transmit completed with DMA */
@@ -778,6 +783,10 @@ void dma2_stream3_isr(void)
 
 	/* Increment the status to indicate one of the transfers is complete */
 	transceive_status++;
+
+	/* Mark end of transmission once all transfers are complete.  */
+	gpio_toggle (GPIOD, GPIO12);
+
 	//gpio_clear(GPIOB,GPIO1);
 }
 
@@ -1101,7 +1110,7 @@ void adc_isr()
                 unsigned p = c*v;
 
 		gpio_toggle(GPIOD, GPIO15);
-		gpio_toggle(GPIOD, GPIO12);
+		//gpio_toggle(GPIOD, GPIO12);
 
 		/* Select the SPI slave.  */
 //		spi_set_nss_low (SPI1);
@@ -1131,8 +1140,8 @@ void adc_isr()
 		gpio_toggle(GPIOD, GPIO15);
 
 		/* Deselect the SPI slave.  */
-//		spi_set_nss_high (SPI1);
-		gpio_toggle(GPIOD, GPIO12);
+		// spi_set_nss_high (SPI1);
+		// gpio_toggle(GPIOD, GPIO12);
 
                 a_data->energy_accum += p;
 
