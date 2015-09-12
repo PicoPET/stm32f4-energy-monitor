@@ -5,7 +5,7 @@
 import pyenergy
 from time import sleep
 
-em = pyenergy.EnergyMonitor()
+em = pyenergy.EnergyMonitor('EE00')
 em.connect()
 
 em.enableMeasurementPoint(1)
@@ -20,4 +20,4 @@ while True:
     vref = em.measurement_params[mp]['vref']
 
     print "{}, {}, {}".format(v[4] * 2. / 168000000 * 2, float(vref) / 4096. * v[2] * 2, float(vref) / gain / resistor / 4096. * v[3])
-    sleep(0.0001) # Value 0.0001 (100 µs) yields 1kHz measurement rate.
+    sleep(0.0001) # 100 microseconds period, i.e., 10kHz sampling
