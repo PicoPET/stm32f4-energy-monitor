@@ -242,7 +242,7 @@ class EnergyMonitor(object):
 
     def __init__(self, serial="EE00"):
         devs = self.getBoards()
-
+        print "Got {} boards." . format (len(devs))
         sdevs = []
         for d in devs:
             try:
@@ -260,6 +260,7 @@ class EnergyMonitor(object):
                     error("You need to update the firmware on this board before you can use it")
                 continue
             s = self.getSerial(d)
+	    print "Current device = " + ':'.join (map (lambda l: '{:#x}'.format(ord(l[0])), list(s))) + ' ({:d} characters)' . format (len (s))
 
             if s == serial:
                 sdevs.append(d)

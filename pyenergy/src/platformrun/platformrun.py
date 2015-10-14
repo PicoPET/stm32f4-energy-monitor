@@ -80,7 +80,7 @@ class LogWriter(object):
     def close(self):
         pass
 
-def gdb_launch(gdbname, port, fname, run_timeout=30, post_commands=[], pre_commands=[]):
+def gdb_launch(gdbname, port, fname, run_timeout=3000, post_commands=[], pre_commands=[]):
     info("Starting+connecting to gdb and loading file")
 
     gdblogger = logger.getChild(os.path.split(gdbname)[-1])
@@ -91,7 +91,7 @@ def gdb_launch(gdbname, port, fname, run_timeout=30, post_commands=[], pre_comma
     gdb.sendline("set confirm off")
     gdb.expect(r".*\(gdb\) ")
 
-    gdb.sendline("target remote :{}".format(port))
+    gdb.sendline("target extended-remote :{}".format(port))
     gdb.expect(r'Remote debugging using.*\n')
     gdb.expect(r'.*\n')
     gdb.expect(r".*\(gdb\) ")
@@ -117,21 +117,29 @@ def gdb_launch(gdbname, port, fname, run_timeout=30, post_commands=[], pre_comma
     gdb.expect(r'Transfer rate.*\n')
     gdb.expect(r'\(gdb\) ')
 
+    print "Loading done"
+
     gdb.sendline("delete breakpoints")
     gdb.expect(r".*\(gdb\) ")
 
-    gdb.sendline("break exit")
-    gdb.expect(r'.*Breakpoint .*\n')
-    gdb.expect(r".*\(gdb\) ")
+    #gdb.sendline("break exit")
+    #gdb.expect(r'.*Breakpoint .*\n')
+    #gdb.expect(r".*\(gdb\) ")
 
     gdb.sendline("break _exit")
     gdb.expect(r'.*Breakpoint .*\n')
     gdb.expect(r".*\(gdb\) ")
 
+    print "Breakpoints set"
+
     info("Sending continue to gdb")
     gdb.sendline("continue")
     gdb.expect(r'Continuing.*\n')
+
+    print "Benchmark {} running..." . format (fname)
     gdb.expect(r'.*Breakpoint.*exit.*\n', timeout=run_timeout)
+
+    print "Breakpoint hit."
 
     info("Breakpoint hit")
 
@@ -476,6 +484,18 @@ def sam4lxplained(fname, doMeasure=True):
 
     return finishMeasurement("sam4lxplained", em, doMeasure)
 
+# LPCXpresso 1115 configuration: run via GDB
+@killBgOnCtrlC
+def lpcxpresso1115(fname, doMeasure=True):
+    em = setupMeasurement("lpcxpresso_lpc1115")
+
+    print "setupMeasurement done"
+    crt_emu = background_proc(tool_config['tools']['crt_emu_lpc11_13'] + " --wire=winusb -pLPC1115/303 -e0 --mi --server :1234")
+    print "CRT EMU launched"
+    gdb_launch(tool_config['tools']['arm_gdb'], 1234, fname)
+    kill_background_proc(crt_emu)
+
+    return finishMeasurement("lpcxpresso_lpc1115", em, doMeasure)
 
 def run(platformname, execname, measurement=True):
 
@@ -504,6 +524,8 @@ def run(platformname, execname, measurement=True):
         m = mspexp430fr5739(execname, measurement)
     elif platformname == "sam4lxplained":
         m = sam4lxplained(execname, measurement)
+    elif platformname == "lpcxpresso_lpc1115":
+        m = lpcxpresso1115(execname, measurement)
     else:
         raise RuntimeError("Unknown platform " + platformname)
     return m
