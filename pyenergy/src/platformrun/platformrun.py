@@ -166,8 +166,12 @@ def gdb_launch(gdbname, port, fname, run_timeout=3000, post_commands=[], pre_com
         gdb.sendline(cmd)
         gdb.expect(r'.*\(gdb\) ')
 
+    print "Quitting GDB..."
+
     info("Quitting GDB")
     gdb.sendline("quit")
+
+    print " done."
 
 bg_procs = []
 bg_proc_map = {}
