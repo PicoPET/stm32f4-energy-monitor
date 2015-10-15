@@ -80,7 +80,7 @@ class LogWriter(object):
     def close(self):
         pass
 
-def gdb_launch(gdbname, port, fname, run_timeout=3000, post_commands=[], pre_commands=[]):
+def gdb_launch(gdbname, port, fname, run_timeout=3000, post_commands=[], pre_commands=[], custom_attach=None, custom_response=None):
     info("Starting+connecting to gdb and loading file")
 
     gdblogger = logger.getChild(os.path.split(gdbname)[-1])
@@ -91,10 +91,29 @@ def gdb_launch(gdbname, port, fname, run_timeout=3000, post_commands=[], pre_com
     gdb.sendline("set confirm off")
     gdb.expect(r".*\(gdb\) ")
 
-    gdb.sendline("target extended-remote :{}".format(port))
-    gdb.expect(r'Remote debugging using.*\n')
-    gdb.expect(r'.*\n')
-    gdb.expect(r".*\(gdb\) ")
+    if custom_attach == None:
+        gdb.sendline("target {}remote :{}".format(remote_prefix, port))
+        gdb.expect(r'Remote debugging using.*\n')
+        gdb.expect(r'.*\n')
+        gdb.expect(r".*\(gdb\) ")
+    else:
+        print "Sending custom attach sequence: " + custom_attach
+        gdb.sendline(custom_attach)
+        gdb.expect(r'Remote debugging using.*\n')
+        # Gobble up the communication trace etc.
+        # Format of custom_response: array of regexps with '.*\(gdb\) ' in position 0
+        # and '0x.*\n' in position 1.  Subsequent regexps are arbitrary.
+        while True:
+           a = gdb.expect(custom_response)
+           if a == 0:
+               # Got prompt ==> we're done.
+               print "Target under GDB control."
+               break
+           elif a == 1:
+               # Got the address
+               print "Communication done, received current address."
+           else:
+               print "Skipping communication trace: case {} " . format(a)
 
     for cmd in pre_commands:
         gdb.sendline(cmd)
@@ -122,9 +141,9 @@ def gdb_launch(gdbname, port, fname, run_timeout=3000, post_commands=[], pre_com
     gdb.sendline("delete breakpoints")
     gdb.expect(r".*\(gdb\) ")
 
-    #gdb.sendline("break exit")
-    #gdb.expect(r'.*Breakpoint .*\n')
-    #gdb.expect(r".*\(gdb\) ")
+    gdb.sendline("break exit")
+    gdb.expect(r'.*Breakpoint .*\n')
+    gdb.expect(r".*\(gdb\) ")
 
     gdb.sendline("break _exit")
     gdb.expect(r'.*Breakpoint .*\n')
@@ -484,16 +503,18 @@ def sam4lxplained(fname, doMeasure=True):
 
     return finishMeasurement("sam4lxplained", em, doMeasure)
 
-# LPCXpresso 1115 configuration: run via GDB
-@killBgOnCtrlC
+# LPCXpresso 1115 configuration: run via GDB.
+# Launch crt_emu from inside GDB using 'custom_attach' key/value, and process
+# the response including the communication trace.
 def lpcxpresso1115(fname, doMeasure=True):
     em = setupMeasurement("lpcxpresso_lpc1115")
 
     print "setupMeasurement done"
-    crt_emu = background_proc(tool_config['tools']['crt_emu_lpc11_13'] + " --wire=winusb -pLPC1115/303 -e0 --mi --server :1234")
-    print "CRT EMU launched"
-    gdb_launch(tool_config['tools']['arm_gdb'], 1234, fname)
-    kill_background_proc(crt_emu)
+    crt_emu = tool_config['tools']['crt_emu_lpc11_13'] + " -2 -e0 --wire=winusb -pLPC1115/303 --vendor=NXP -flash-driver=LPC11_12_13_64K_8K.cfx"
+    # The LPC monitor uses piped extended-target mode, which (currently) generates lots of crap output.
+    attach_command="target extended-remote | " + crt_emu
+    attach_response=[r'.*\(gdb\) ',r'0x.*\n',r'Ni:.*\n',r'Pc:.*\n',r'Nc.*\n',r'Cr.*\n']
+    gdb_launch(tool_config['tools']['arm_gdb'], 1234, fname, custom_attach=attach_command, custom_response=attach_response)
 
     return finishMeasurement("lpcxpresso_lpc1115", em, doMeasure)
 
