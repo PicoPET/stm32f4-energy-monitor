@@ -1,0 +1,7 @@
+{
+    "tools" : {
+        "crt_emu_lpc11_13" : "/usr/local/lpcxpresso_7.9.0_455/lpcxpresso/bin/crt_emu_lpc11_13_nxp",
+        "arm_gdb" : "/usr/local/lpcxpresso_7.9.0_455/lpcxpresso/tools/bin/arm-none-eabi-gdb"
+    },
+    "enabled" : ["lpcxpresso_lpc1115"]
+}
