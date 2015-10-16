@@ -38,9 +38,9 @@
         "serial-number": "pickit"
     },
     "lpcxpresso_lpc1115" : {
-        "energy-monitor" : "CXM0",
+        "energy-monitor" : "EE00",
         "trigger-pin" : "PA0",
         "measurement-point" : 1,
-        "resistor" : 1
+        "resistor" : 0.0475
     }
 }
