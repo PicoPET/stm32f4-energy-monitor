@@ -14,3 +14,4 @@ pyenergy.la
 *.lo
 stamp-h1
 config.h
+*.pyc
