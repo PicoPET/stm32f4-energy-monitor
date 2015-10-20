@@ -42,5 +42,11 @@
         "trigger-pin" : "PA0",
         "measurement-point" : 1,
         "resistor" : 0.0475
+    },
+    "lpcxpresso_lpc1769" : {
+       "energy-monitor" : "EE00",
+       "trigger-pin" : "PA0",
+       "measurement-point" : 1,
+       "resistor" : 0.475
     }
 }

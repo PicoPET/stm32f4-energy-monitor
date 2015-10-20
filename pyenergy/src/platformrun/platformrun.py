@@ -156,11 +156,14 @@ def gdb_launch(gdbname, port, fname, run_timeout=3000, post_commands=[], pre_com
     gdb.expect(r'Continuing.*\n')
 
     print "Benchmark {} running..." . format (fname)
-    gdb.expect(r'.*Breakpoint.*exit.*\n', timeout=run_timeout)
+    outcome = gdb.expect([r'.*Breakpoint.*exit.*\n', r'Program received signal.*\(gdb\) '], timeout=run_timeout)
 
-    print "Breakpoint hit."
-
-    info("Breakpoint hit")
+    if outcome == 0:
+        print "Breakpoint hit."
+        info("Breakpoint hit")
+    else:
+        print "Program terminated abnormally on a signal"
+	info("Program terminated abnormally on a signal")
 
     for cmd in post_commands:
         gdb.sendline(cmd)
@@ -507,7 +510,7 @@ def sam4lxplained(fname, doMeasure=True):
 
     return finishMeasurement("sam4lxplained", em, doMeasure)
 
-# LPCXpresso 1115 configuration: run via GDB.
+# LPCXpresso 1115 configuration: run via GDB and pipe-based extended-remote.
 # Launch crt_emu from inside GDB using 'custom_attach' key/value, and process
 # the response including the communication trace.
 def lpcxpresso1115(fname, doMeasure=True):
@@ -521,6 +524,23 @@ def lpcxpresso1115(fname, doMeasure=True):
     gdb_launch(tool_config['tools']['arm_gdb'], 1234, fname, custom_attach=attach_command, custom_response=attach_response)
 
     return finishMeasurement("lpcxpresso_lpc1115", em, doMeasure)
+
+# LPCXpresso 1769 configuration: run via GDB and pipe-based extended-remote.
+# Launch crt_emu from inside GDB using 'custom_attach' key/value, and process
+# the response including the communication trace.
+# FIXME/TODO: Fold into LPC1115 code as soon as the (hopefully rare) differences
+# are duly identified.
+def lpcxpresso1769(fname, doMeasure=True):
+    em = setupMeasurement("lpcxpresso_lpc1769")
+
+    print "setupMeasurement done"
+    crt_emu = tool_config['tools']['crt_emu_cm3_nxp'] + " -mi -2 -pLPC1769 -vendor=NXP -e0 -wire=winUSB -flash-driver=LPC175x_6x_512.cfx"
+    # The LPC monitor uses piped extended-target mode, which (currently) generates lots of crap output.
+    attach_command="target extended-remote | " + crt_emu
+    attach_response=[r'.*\(gdb\) ',r'0x.*\n',r'Ni:.*\n',r'Pc:.*\n',r'Nc.*\n',r'Cr:.*\n',r'Xs:.*\n',r'Xc:.*\n']
+    gdb_launch(tool_config['tools']['arm_gdb'], 1234, fname, custom_attach=attach_command, custom_response=attach_response)
+
+    return finishMeasurement("lpcxpresso_lpc1769", em, doMeasure)
 
 def run(platformname, execname, measurement=True):
 
@@ -551,6 +571,8 @@ def run(platformname, execname, measurement=True):
         m = sam4lxplained(execname, measurement)
     elif platformname == "lpcxpresso_lpc1115":
         m = lpcxpresso1115(execname, measurement)
+    elif platformname == "lpcxpresso_lpc1769":
+        m = lpcxpresso1769(execname, measurement)
     else:
         raise RuntimeError("Unknown platform " + platformname)
     return m
