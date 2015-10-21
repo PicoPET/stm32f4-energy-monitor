@@ -118,9 +118,9 @@ typedef struct {
     uint64_t current_time;
 } instant_data;
 
-/* Sample at 400 kS/s, 1 out of 4 channels active: one 128-bit buffer sent
-   every 10 microseconds (3 microseconds xfer time for 128 bits.  */
-int tperiod=168000000/100000/4;
+/* Sample at 100 kS/s, 1 out of 4 channels active: one 128-bit buffer sent
+   every 40 microseconds (3 microseconds xfer time for 128 bits).  */
+int tperiod=168000000/100000;
 
 typedef struct {
     accumulated_data accum_data;
@@ -469,7 +469,7 @@ void timer_setup()
     - SPI1_MOSI: PA7.  */
 void spi_setup ()
 {
-    gpio_toggle(GPIOD, GPIO15);
+    //gpio_toggle(GPIOD, GPIO15);
     /* Set up GPIOA ports 4, 5, 6 and 7:
         - speed 50 MHz
 	- pullup-pulldown (as opposed to open-drain)
@@ -522,7 +522,7 @@ void spi_setup ()
 
     /* Enable SPI1 peripheral.  */
     spi_enable(SPI1);
-    gpio_toggle(GPIOD, GPIO15);
+    //gpio_toggle(GPIOD, GPIO15);
 }
 
 static void dma_int_enable(void)
@@ -583,7 +583,7 @@ static int spi_dma_transceive(const uint8_t *tx_buf, int tx_len, uint8_t *rx_buf
 	}
 #endif
 
-	gpio_toggle (GPIOD, GPIO15);
+	//gpio_toggle (GPIOD, GPIO15);
 	//spi_set_nss_low (SPI1);
 	/* Reset status flag appropriately (both 0 case caught above) */
 	transceive_status = 0;
@@ -684,12 +684,12 @@ static int spi_dma_transceive(const uint8_t *tx_buf, int tx_len, uint8_t *rx_buf
 	 ZC FIXME: what'zat?
 	 */
 	if (rx_len > 0) {
-		spi_enable_rx_dma(SPI1);
 		gpio_set (GPIOD, GPIO14);
+		spi_enable_rx_dma(SPI1);
 	}
 	if (tx_len > 0) {
-		spi_enable_tx_dma(SPI1);
 		gpio_set (GPIOD, GPIO15);
+		spi_enable_tx_dma(SPI1);
 	}
 
 	/*  gpio_toggle (GPIOD, GPIO12);  */
@@ -1038,8 +1038,8 @@ void adc_isr()
 
 		// Copy current and voltage to DMA buffer.  Add the channel ID+1
 		// in the high 4 bits.
-		tx_buffer[6] = c /* (mp->lastI & 0xfff) | ((i + 1) << 12) */;
-		tx_buffer[7] = v /* (mp->lastV & 0xfff) | ((i + 1) << 12) */;
+		tx_buffer[6] = (c & 0xfff) | (unsigned short) ((i + 1) << 12);
+		tx_buffer[7] = (v & 0xfff) | (unsigned short) ((i + 1) << 12);
 
                 if(a_data->elapsed_time > 0) // ignore first sample (lastP = 0)
                 {
