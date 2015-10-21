@@ -447,7 +447,10 @@ static void usbdev_set_config(usbd_device *usbd_dev, uint16_t wValue)
     usbd_register_reset_callback(usbd_dev, usb_reset_cb);
 }
 
-void timer_setup()
+/* Set up TIM2 to drive the ADC firing.
+   ZC FIXME/TODO: switch to a smaller timer to free a 32-bit timer
+   cf. (RM0090 section 18: TIM3/TIM4 are 16-bit.)  */
+void timer2_setup()
 {
     rcc_peripheral_enable_clock(&RCC_APB1ENR, RCC_APB1ENR_TIM2EN);
 
@@ -462,6 +465,23 @@ void timer_setup()
     timer_enable_counter(TIM2);
 }
 
+/* Set up TIM5 to provide a microsecond clock with failry monotonic advance.
+   Rollover will happen after 2^32 microseconds == 4294.967 s == 1h 11m 34.80s
+   while measurement runs are in the few seconds range. */
+void timer5_setup()
+{
+    rcc_peripheral_enable_clock(&RCC_APB1ENR, RCC_APB1ENR_TIM5EN);
+
+    timer_disable_counter(TIM5);
+    timer_reset(TIM5);
+    timer_set_mode(TIM5, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
+    timer_set_period(TIM5, 0xffffffff);
+    timer_set_prescaler(TIM5, 168 - 1);
+    timer_set_clock_division(TIM5, TIM_CR1_CKD_CK_INT);
+    timer_set_master_mode(TIM5, TIM_CR2_MMS_UPDATE);
+    timer_enable_preload(TIM5);
+    timer_enable_counter(TIM5);
+}
 /* Set up the SPI.  Pin assignment: use plain alternate function 5:
     - SPI1_NSS: PA4
     - SPI1_SCK: PA5
@@ -909,7 +929,8 @@ int main(void)
     dma_setup();
     adc_setup();
     spi_setup ();
-    timer_setup();
+    timer2_setup();
+    timer5_setup();
     exti_timer_setup();
 
     gpio_toggle(GPIOA, GPIO12);
@@ -983,12 +1004,31 @@ void exit(int a)
 /* ZC: Tx buffer for testing. 128 bits @ 42 Mbit/s ==> at most 328125 xfers/s, 100 kS/s is OK. */
 uint16_t tx_buffer[8] = { 0x1234, 0xa5a5, 0x1f1f, 0xb00b, 0xdead, 0xbeef, 0xc1fc, 0xcf1c };
 
+/* Structure type holding a single incremental record.  */
+typedef struct {
+  unsigned int current : 12;	/* Raw current measurement.  */
+  unsigned int voltage : 12;	/* Raw voltage measurement.  */
+  unsigned int timeskew : 8;	/* Time delay wrt. main timestamp.  */
+} channel_value_t;
+
+
+/* Structure type holding a trace frame: extensive version: 128 bits  */
+typedef struct {
+  unsigned int timestamp;	/* Timestamp in microseconds since TIM5 config/overflow.  */
+  channel_value_t channel[3];	/* Channel information including time skew.  */
+} frame_t;
+
 void adc_isr()
 {
     int m_point;
     measurement_point *mp;
     int adcs[3] = {ADC1, ADC2, ADC3};
     int i;
+    unsigned int tim5;
+    unsigned int tim5_high, tim5_low;
+
+    /* Get the TIM5 reading at the start of processing.  */
+    tim5 = timer_get_counter (TIM5);
 
     for(i = 0; i < 3; ++i)
     {
