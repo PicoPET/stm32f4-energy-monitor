@@ -87,7 +87,7 @@ static const char *serial_str = (const char*)0x08004000;
 static const char *usb_strings[] = {
     "James Pallister",
     "Medium speed energy monitor",
-    0x08004000,
+    (const char *) 0x08004000,
 };
 
 void dma_setup();
