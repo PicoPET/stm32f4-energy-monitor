@@ -118,9 +118,14 @@ typedef struct {
     uint64_t current_time;
 } instant_data;
 
-/* Sample at 100 kS/s, 1 out of 4 channels active: one 128-bit buffer sent
-   every 40 microseconds (3 microseconds xfer time for 128 bits).  */
-int tperiod=168000000/100000;
+/* Sample at 10kS/s, 1 out of 4 channels active for now.
+
+   One 128-bit buffer will be sent every 100 microseconds (3 microseconds
+   xfer time for 128 bits).
+
+   The divide-by-4 is necessary to adjust for the 1/2-sysclk APB1 clock,
+   furter divided by 2 due to prescaler divisor being equal to 1.   */
+int tperiod=168000000/4/10000;
 
 typedef struct {
     accumulated_data accum_data;
@@ -148,6 +153,9 @@ typedef struct {
 measurement_point m_points[4] = {0};
 
 int adc_to_mpoint[3] = {-1, -1, -1};
+
+/* Variable to hold the last reading of TIM5.  */
+volatile unsigned int tim5_value;
 
 // USB communication globals ////////////////////////////////////////
 usbd_device *usbd_dev;
@@ -207,6 +215,8 @@ void exti_setup(int m_point)
 
 void start_measurement(int m_point)
 {
+    tim5_value = timer_get_counter (TIM5);
+
     m_points[m_point].running = 1;
 
     m_points[m_point].accum_data.energy_accum = 0;
@@ -281,6 +291,8 @@ static int usbdev_control_request(usbd_device *usbd_dev, struct usb_setup_data *
     (void)complete;
     (void)buf;
     (void)usbd_dev;
+
+    tim5_value = timer_get_counter (TIM5);
 
     switch (req->bRequest) {
     case 0:    // toggle LEDS
@@ -449,7 +461,7 @@ static void usbdev_set_config(usbd_device *usbd_dev, uint16_t wValue)
 
 /* Set up TIM2 to drive the ADC firing.
    ZC FIXME/TODO: switch to a smaller timer to free a 32-bit timer
-   cf. (RM0090 section 18: TIM3/TIM4 are 16-bit.)  */
+   (cf. RM0090 section 18: TIM3/TIM4 are 16-bit.)  */
 void timer2_setup()
 {
     rcc_peripheral_enable_clock(&RCC_APB1ENR, RCC_APB1ENR_TIM2EN);
@@ -457,9 +469,9 @@ void timer2_setup()
     timer_disable_counter(TIM2);
     timer_reset(TIM2);
     timer_set_mode(TIM2, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
-    timer_set_period(TIM2, tperiod);
+    timer_set_period(TIM2, tperiod - 1);
     timer_set_prescaler(TIM2, 0);
-    timer_set_clock_division(TIM2, TIM_CR1_CKD_CK_INT);
+    timer_set_clock_division(TIM2, TIM_CR1_CKD_CK_INT);		/* FIXME/TODO: Redundant wrt. 'timer_set_mode'.  */
     timer_set_master_mode(TIM2, TIM_CR2_MMS_UPDATE);
     timer_enable_preload(TIM2);
     timer_enable_counter(TIM2);
@@ -475,13 +487,13 @@ void timer5_setup()
     timer_disable_counter(TIM5);
     timer_reset(TIM5);
     timer_set_mode(TIM5, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
-    timer_set_period(TIM5, 0xffffffff);
     timer_set_prescaler(TIM5, 168 - 1);
-    timer_set_clock_division(TIM5, TIM_CR1_CKD_CK_INT);
+    timer_set_period(TIM5, 1000000000 - 1);
     timer_set_master_mode(TIM5, TIM_CR2_MMS_UPDATE);
-    timer_enable_preload(TIM5);
+    timer_disable_preload(TIM5);
     timer_enable_counter(TIM5);
 }
+
 /* Set up the SPI.  Pin assignment: use plain alternate function 5:
     - SPI1_NSS: PA4
     - SPI1_SCK: PA5
@@ -548,10 +560,10 @@ void spi_setup ()
 static void dma_int_enable(void)
 {
     /* SPI1 RX on DMA2 Channel 2 */
-    nvic_set_priority(NVIC_DMA2_STREAM2_IRQ, 0);
+    nvic_set_priority(NVIC_DMA2_STREAM2_IRQ, 0x20);
     nvic_enable_irq(NVIC_DMA2_STREAM2_IRQ);
     /* SPI1 TX on DMA2 Channel 3 */
-    nvic_set_priority(NVIC_DMA2_STREAM3_IRQ, 0);
+    nvic_set_priority(NVIC_DMA2_STREAM3_IRQ, 0x20);
     nvic_enable_irq(NVIC_DMA2_STREAM3_IRQ);
 }
 
@@ -567,6 +579,9 @@ void dma_setup(void)
     /* Reset DMA streams.  */
     dma_stream_reset(DMA2, DMA_STREAM2);
     dma_stream_reset(DMA2, DMA_STREAM3);
+
+    /* Enable DMA interrupts.  */
+    dma_int_enable ();
 }
 
 /* Use 16-bit xfers.  */
@@ -720,7 +735,7 @@ static int spi_dma_transceive(const uint8_t *tx_buf, int tx_len, uint8_t *rx_buf
 void dma2_stream2_isr(void)
 {
 	// gpio_set(GPIOA,GPIO4);
-	if ((DMA2_LISR &DMA_LISR_TCIF2) != 0) {
+	if ((DMA2_LISR & DMA_LISR_TCIF2) != 0) {
 		DMA2_LIFCR |= DMA_LIFCR_CTCIF2;
 	}
 
@@ -743,7 +758,7 @@ void dma2_stream2_isr(void)
 void dma2_stream3_isr(void)
 {
 	//gpio_set(GPIOB,GPIO1);
-	if ((DMA2_LISR &DMA_LISR_TCIF3) != 0) {
+	if ((DMA2_LISR & DMA_LISR_TCIF3) != 0) {
 		DMA2_LIFCR |= DMA_LIFCR_CTCIF3;
 	}
 
@@ -1024,11 +1039,12 @@ void adc_isr()
     measurement_point *mp;
     int adcs[3] = {ADC1, ADC2, ADC3};
     int i;
-    unsigned int tim5;
-    unsigned int tim5_high, tim5_low;
+    unsigned short tim5_high, tim5_low;
 
     /* Get the TIM5 reading at the start of processing.  */
-    tim5 = timer_get_counter (TIM5);
+    tim5_value = *((unsigned int *) 0x40000c24); /* = timer_get_counter (TIM5); */
+    tim5_low = (unsigned short) (tim5_value & 0xffff);
+    tim5_high = (unsigned short) ((tim5_value >> 16) & 0xffff);
 
     for(i = 0; i < 3; ++i)
     {
@@ -1086,37 +1102,6 @@ void adc_isr()
                     a_data->energy_accum += (p + mp->lastP) / 2; // Trapezoidal integration;
                 }
 
-		/* Select the SPI slave.  */
-//		spi_set_nss_low (SPI1);
-
-		/* Send the SPI data:
-		    - magic: 0xb00f
-		    - port
-		    - current
-		    - voltage
-		   in that order.
-
-		   Use blocking calls to prevent overwrites of SPI data reg.  */
-//		spi_write (SPI1, 0xb00f);
-		/* Send the predefined buffer on SPI using DMA.  */
-		//if (transceive_status == 2)
-		{
-		  /* Both previous transfers completed (either could be fake)
-		     or initial round.  */
-		  transceive_status = 0;
-		  spi_dma_transceive (tx_buffer, 8, &dummy_rx_buf, 0);
-		}
-#if 0
-		spi_send (SPI1, (unsigned short) i);
-		spi_send (SPI1, c);
-		spi_send (SPI1, v);
-#endif
-		//gpio_toggle(GPIOD, GPIO15);
-
-		/* Deselect the SPI slave.  */
-		// spi_set_nss_high (SPI1);
-		// gpio_toggle(GPIOD, GPIO12);
-
                 mp->lastP = p;
 
                 a_data->n_samples += 1;
@@ -1146,6 +1131,40 @@ void adc_isr()
             adc_enable_eoc_interrupt(adcs[i]);
         }
     }
+	    /* Select the SPI slave.  */
+//		spi_set_nss_low (SPI1);
+
+	    /* Send the SPI data:
+		    - magic: 0xb00f
+		    - port
+		    - current
+		    - voltage
+		   in that order.
+
+		   Use blocking calls to prevent overwrites of SPI data reg.  */
+//		spi_write (SPI1, 0xb00f);
+	    /* Send the predefined buffer on SPI using DMA.  */
+	    //if (transceive_status == 2)
+	    {
+	      tx_buffer[4] = tim5_high;
+	      tx_buffer[5] = tim5_low;
+
+	      /* Both previous transfers completed (either could be fake)
+	         or initial round.  */
+	      transceive_status = 0;
+	      spi_dma_transceive (tx_buffer, 8, &dummy_rx_buf, 0);
+	    }
+#if 0
+	    spi_send (SPI1, (unsigned short) i);
+	    spi_send (SPI1, c);
+	    spi_send (SPI1, v);
+#endif
+	    //gpio_toggle(GPIOD, GPIO15);
+
+	    /* Deselect the SPI slave.  */
+	    // spi_set_nss_high (SPI1);
+	    // gpio_toggle(GPIOD, GPIO12);
+
 }
 
 int milliseconds = 0;
