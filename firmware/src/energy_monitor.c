@@ -462,36 +462,38 @@ static void usbdev_set_config(usbd_device *usbd_dev, uint16_t wValue)
 /* Set up TIM2 to drive the ADC firing.
    ZC FIXME/TODO: switch to a smaller timer to free a 32-bit timer
    (cf. RM0090 section 18: TIM3/TIM4 are 16-bit.)  */
-void timer2_setup()
+void timer2_setup ()
 {
-    rcc_peripheral_enable_clock(&RCC_APB1ENR, RCC_APB1ENR_TIM2EN);
+    rcc_peripheral_enable_clock (&RCC_APB1ENR, RCC_APB1ENR_TIM2EN);
 
-    timer_disable_counter(TIM2);
-    timer_reset(TIM2);
-    timer_set_mode(TIM2, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
-    timer_set_period(TIM2, tperiod - 1);
-    timer_set_prescaler(TIM2, 0);
-    timer_set_clock_division(TIM2, TIM_CR1_CKD_CK_INT);		/* FIXME/TODO: Redundant wrt. 'timer_set_mode'.  */
-    timer_set_master_mode(TIM2, TIM_CR2_MMS_UPDATE);
-    timer_enable_preload(TIM2);
-    timer_enable_counter(TIM2);
+    timer_disable_counter (TIM2);
+    timer_reset (TIM2);
+    timer_set_mode (TIM2, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
+    timer_set_period (TIM2, tperiod - 1);
+    timer_set_prescaler (TIM2, 0);
+    timer_set_clock_division (TIM2, TIM_CR1_CKD_CK_INT);		/* FIXME/TODO: Redundant wrt. 'timer_set_mode'.  */
+    timer_set_master_mode (TIM2, TIM_CR2_MMS_UPDATE);
+    timer_enable_preload (TIM2);
+    timer_enable_counter (TIM2);
 }
 
-/* Set up TIM5 to provide a microsecond clock with failry monotonic advance.
+/* Set up TIM5 to provide a microsecond clock with fairly monotonic advance.
    Rollover will happen after 2^32 microseconds == 4294.967 s == 1h 11m 34.80s
    while measurement runs are in the few seconds range. */
-void timer5_setup()
+void timer5_setup (void)
 {
-    rcc_peripheral_enable_clock(&RCC_APB1ENR, RCC_APB1ENR_TIM5EN);
+    rcc_peripheral_enable_clock (&RCC_APB1ENR, RCC_APB1ENR_TIM5EN);
 
-    timer_disable_counter(TIM5);
-    timer_reset(TIM5);
-    timer_set_mode(TIM5, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
-    timer_set_prescaler(TIM5, 168 - 1);
-    timer_set_period(TIM5, 1000000000 - 1);
-    timer_set_master_mode(TIM5, TIM_CR2_MMS_UPDATE);
-    timer_disable_preload(TIM5);
-    timer_enable_counter(TIM5);
+    timer_disable_counter (TIM5);
+    timer_reset (TIM5);
+    timer_set_mode (TIM5, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
+    timer_set_prescaler (TIM5, 168 - 1);
+    timer_set_period (TIM5, 1000000000 - 1);
+    timer_set_master_mode (TIM5, TIM_CR2_MMS_UPDATE);
+    /* Generate update events only on overflow.  */
+    timer_update_on_overflow (TIM5);
+    timer_disable_preload (TIM5);
+    timer_enable_counter (TIM5);
 }
 
 /* Set up the SPI.  Pin assignment: use plain alternate function 5:
@@ -587,8 +589,9 @@ void dma_setup(void)
 /* Use 16-bit xfers.  */
 #define USE_16BIT_TRANSFERS
 
-/* Asssume "previous" transfers both completed.  */
-unsigned int transceive_status = 2;
+/* Asssume "previous" transfers both completed.
+   Current value is the number of ongoing transfers.  */
+unsigned int transceive_status = 0;
 
 int16_t dummy_rx_buf;
 
@@ -622,11 +625,11 @@ static int spi_dma_transceive(const uint8_t *tx_buf, int tx_len, uint8_t *rx_buf
 	//spi_set_nss_low (SPI1);
 	/* Reset status flag appropriately (both 0 case caught above) */
 	transceive_status = 0;
-	if (rx_len < 1) {
-		transceive_status = 1;
+	if (rx_len > 0) {
+		transceive_status++ ;
 	}
-	if (tx_len < 1) {
-		transceive_status = 1;
+	if (tx_len > 0) {
+		transceive_status++;
 	}
 
 	/* RM0090 10.3.17(1): If the stream is enabled, disable it.
@@ -745,8 +748,12 @@ void dma2_stream2_isr(void)
 
 	dma_disable_stream(DMA2, DMA_STREAM2);
 
-	/* Increment the status to indicate one of the transfers is complete */
-	transceive_status++;
+	/* Decrement the status to indicate one of the transfers is complete */
+	transceive_status--;
+
+	/* If no transfers are under way, re-enable the ADC interrupts.  */
+	if (transceive_status == 0)
+	  nvic_enable_irq (NVIC_ADC_IRQ);
 
 	/* Mark end of reception.  */
 	gpio_clear (GPIOD, GPIO14);
@@ -770,8 +777,12 @@ void dma2_stream3_isr(void)
 
 	//spi_set_nss_high (SPI1);
 
-	/* Increment the status to indicate one of the transfers is complete */
-	transceive_status++;
+	/* Decrement the status to indicate one of the transfers is complete */
+	transceive_status--;
+
+	/* If no transfers are under way, re-enable the ADC interrupts.  */
+	if (transceive_status == 0)
+	  nvic_enable_irq (NVIC_ADC_IRQ);
 
 	/* Mark end of transmission.  */
 	gpio_clear (GPIOD, GPIO15);
@@ -1037,9 +1048,13 @@ void adc_isr()
 {
     int m_point;
     measurement_point *mp;
-    int adcs[3] = {ADC1, ADC2, ADC3};
+    /* ADC list is fixed.  */
+    const unsigned int adcs[3] = {ADC1, ADC2, ADC3};
     int i;
     unsigned short tim5_high, tim5_low;
+
+    /* Disable ADC IRQs until DMA+SPI transfer is done.  */
+    nvic_disable_irq (NVIC_ADC_IRQ);
 
     /* Get the TIM5 reading at the start of processing.  */
     tim5_value = *((unsigned int *) 0x40000c24); /* = timer_get_counter (TIM5); */
