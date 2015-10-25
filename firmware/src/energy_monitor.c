@@ -155,7 +155,7 @@ measurement_point m_points[4] = {0};
 int adc_to_mpoint[3] = {-1, -1, -1};
 
 /* Variable to hold the last reading of TIM5.  */
-volatile unsigned int tim5_value;
+volatile unsigned int tim5_value = 0;
 
 // USB communication globals ////////////////////////////////////////
 usbd_device *usbd_dev;
@@ -215,7 +215,17 @@ void exti_setup(int m_point)
 
 void start_measurement(int m_point)
 {
+    systick_interrupt_disable ();
+    /* Start the microsecond timer.  */
+    timer_enable_counter (TIM5);
     tim5_value = timer_get_counter (TIM5);
+
+    /* Enable SPI1 peripheral.  */
+    spi_enable(SPI1);
+
+    /* FIXME/TODO: FORNOW: Enable ADC IRQs before power-up to catch spurious ones.
+       Ideally, should clear any pending requests before enabling the IRQs.  */
+    nvic_enable_irq(NVIC_ADC_IRQ);
 
     m_points[m_point].running = 1;
 
@@ -265,6 +275,8 @@ void stop_measurement(int m_point)
         default:
             error_condition(); return;
     }
+
+    systick_interrupt_enable ();
 }
 
 void flash_serial(char b1, char b2, char b3, char b4)
@@ -493,7 +505,7 @@ void timer5_setup (void)
     /* Generate update events only on overflow.  */
     timer_update_on_overflow (TIM5);
     timer_disable_preload (TIM5);
-    timer_enable_counter (TIM5);
+    /* Do not enable the timer NOW.  */
 }
 
 /* Set up the SPI.  Pin assignment: use plain alternate function 5:
@@ -515,6 +527,11 @@ void spi_setup ()
     /* Do not set ouput options on pin PA6 - it's an input.  */
     gpio_set_output_options (GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, GPIO4 | GPIO5 | GPIO7);
     gpio_set_af (GPIOA, GPIO_AF5, GPIO4 | GPIO5 | GPIO6 | GPIO7);
+
+    /* Enable SPI1 clock.  */
+    rcc_peripheral_enable_clock (&RCC_APB2ENR,
+				 /* SPI 1 */
+				 RCC_APB2ENR_SPI1EN);
 
     /* Disable SPI1 peripheral.  */
     spi_disable (SPI1);
@@ -554,8 +571,6 @@ void spi_setup ()
     /* Clean up status information.  */
     /* spi_clear_mode_fault(SPI1);  */
 
-    /* Enable SPI1 peripheral.  */
-    spi_enable(SPI1);
     //gpio_toggle(GPIOD, GPIO15);
 }
 
@@ -572,6 +587,9 @@ static void dma_int_enable(void)
 /* Set up DMA2.  */
 void dma_setup(void)
 {
+    /* Enable DMA clock.  */
+    rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_DMA2EN);
+    rcc_periph_clock_enable (RCC_DMA2);
     rcc_periph_clock_enable (RCC_DMA2);
 
     /* Disable DMA streams.  */
@@ -859,13 +877,15 @@ void adc_setup()
     adc_eoc_after_each(ADC3);
 
     nvic_set_priority(NVIC_ADC_IRQ, 0x10);
-    nvic_enable_irq(NVIC_ADC_IRQ);
+
+    /* Do not enable ADC IRQs yet - wait until measurement starts.  */
 }
 
 void exti_timer_setup()
 {
     // Timer is used for deboucing (is it?)
     // If output on trigger is the same 3ms later, accept as input
+#if 0
     rcc_peripheral_enable_clock(&RCC_APB1ENR, RCC_APB1ENR_TIM3EN);
     timer_reset(TIM3);
     timer_set_mode(TIM3, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
@@ -877,6 +897,7 @@ void exti_timer_setup()
 
     nvic_set_priority(NVIC_TIM3_IRQ, 0x30);
     nvic_enable_irq(NVIC_TIM3_IRQ);
+#endif
 
     nvic_set_priority(NVIC_EXTI0_IRQ, 0x40);
     nvic_set_priority(NVIC_EXTI1_IRQ, 0x40);
@@ -890,7 +911,7 @@ void exti_timer_setup()
 // This should probably reset the board and tell the user
 void error_condition()
 {
-    gpio_set(GPIOD, GPIO15);
+    gpio_set(GPIOD, GPIO13);
     while(1);
 }
 
@@ -901,19 +922,11 @@ int main(void)
 
     rcc_clock_setup_hse_3v3(&hse_8mhz_3v3[CLOCK_3V3_168MHZ]);
 
-    rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_DMA2EN);
     rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_IOPAEN);
     rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_IOPBEN);
     rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_IOPCEN);
     rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_IOPDEN);
     rcc_peripheral_enable_clock(&RCC_AHB2ENR, RCC_AHB2ENR_OTGFSEN);
-
-    /* Enable DMA clock.  */
-    rcc_periph_clock_enable (RCC_DMA2);
-    /* Enable SPI clock.  */
-    rcc_peripheral_enable_clock (&RCC_APB2ENR,
-				 /* SPI 1 */
-				 RCC_APB2ENR_SPI1EN);
 
     // First want to check our serial. If not set, set it
     // Probably want to check that these are alphanumeric as well
@@ -1015,12 +1028,14 @@ void exti_isr()
     }
 }
 
+#if 0
 void tim3_isr()
 {
     TIM_SR(TIM3) &= ~TIM_SR_UIF;
     timer_disable_counter(TIM3);
     status = -1;
 }
+#endif
 
 void exit(int a)
 {
@@ -1051,13 +1066,18 @@ void adc_isr()
     /* ADC list is fixed.  */
     const unsigned int adcs[3] = {ADC1, ADC2, ADC3};
     int i;
+    unsigned int tim5_now;
     unsigned short tim5_high, tim5_low;
 
     /* Disable ADC IRQs until DMA+SPI transfer is done.  */
     nvic_disable_irq (NVIC_ADC_IRQ);
 
+    /* If time went backwards (including overflow), raise an error condition.  */
+    if ((tim5_now = *((unsigned int *) 0x40000c24)) < tim5_value)
+      error_condition ();
+
     /* Get the TIM5 reading at the start of processing.  */
-    tim5_value = *((unsigned int *) 0x40000c24); /* = timer_get_counter (TIM5); */
+    tim5_value = tim5_now; /* = timer_get_counter (TIM5); */
     tim5_low = (unsigned short) (tim5_value & 0xffff);
     tim5_high = (unsigned short) ((tim5_value >> 16) & 0xffff);
 
@@ -1210,20 +1230,33 @@ void sys_tick_handler()
     {
         gpio_clear(GPIOD, GPIO12 | GPIO13 | GPIO14 | GPIO15);
         if(milliseconds % 400 < 100)
+	  {
+	    gpio_clear(GPIOD, GPIO13 | GPIO14 | GPIO15);
             gpio_set(GPIOD, GPIO12);
+	  }
         else if(milliseconds % 400 < 200)
+	  {
+	    gpio_clear(GPIOD, GPIO12 | GPIO14 | GPIO15);
             gpio_set(GPIOD, GPIO13);
+	  }
         else if(milliseconds % 400 < 300)
+	  {
+	    gpio_clear(GPIOD, GPIO12 | GPIO13 | GPIO15);
             gpio_set(GPIOD, GPIO14);
+	  }
         else
+	  {
+	    gpio_clear(GPIOD, GPIO12 | GPIO13 | GPIO14);
             gpio_set(GPIOD, GPIO15);
+	  }
     }
     else if(state == 1)
     {
         if(milliseconds % 200 < 100)
-            gpio_set(GPIOD, flash);
+            /* gpio_set(GPIOD, flash) */  ;
         else
-	    /* GPIO D14 and D15 are used as comm markers.  */
-            gpio_clear(GPIOD, GPIO12 | GPIO13 /* | GPIO14 | GPIO15 */);
+	    /* GPIO D14 and D15 are used as comm markers.
+	       GPIO D13 is error_condition marker.  */
+            gpio_clear(GPIOD, GPIO12 /* | GPIO13 | GPIO14 | GPIO15 */);
     }
 }
