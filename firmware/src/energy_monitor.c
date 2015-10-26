@@ -505,13 +505,15 @@ void timer5_setup (void)
     timer_disable_counter (TIM5);
     timer_reset (TIM5);
     timer_set_mode (TIM5, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
-    timer_set_prescaler (TIM5, 168 - 1);
     timer_set_period (TIM5, 1000000000 - 1);
+    timer_set_prescaler (TIM5, 168 - 1);
     timer_set_master_mode (TIM5, TIM_CR2_MMS_UPDATE);
     /* Generate update events only on overflow.  */
     timer_update_on_overflow (TIM5);
     timer_disable_preload (TIM5);
-    /* Do not enable the timer NOW.  */
+    /* Do not enable the timer NOW - just lock the values.  */
+    timer_enable_counter (TIM5);
+    timer_disable_counter (TIM5);
 }
 
 /* Set up the SPI.  Pin assignment: use plain alternate function 5:
