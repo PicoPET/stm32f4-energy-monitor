@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <string.h>
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/adc.h>
@@ -118,17 +119,17 @@ typedef struct {
     uint64_t current_time;
 } instant_data;
 
-/* Sample at 10kS/s (2 periods/sample)1 out of 4 channels active for now.
+/* Sample at 50kS/s (2 periods/sample), 1 out of 4 channels active for now.
 
-   One 128-bit buffer will be sent every 100 microseconds (3.5 microseconds
+   One 128-bit buffer will be sent every 10 microseconds (3.5 microseconds
    xfer time for 128 bits, 4 microseconds for 144 bits).
 
    The divide-by-4 is necessary to adjust for the 1/2-sysclk APB1 clock,
    furter divided by 2 due to prescaler divisor being equal to 1.  The resulting
-   period of 4200 cycles of 84 MHz APB1 clock results in a frequency of 20 kHz
+   period of 21000 cycles of 84 MHz APB1 clock results in a frequency of 40 kHz
    for I or V component in alternation, leading to a complete measurement being
-   available every 8400 cycles, or 100 microseconds.    */
-int tperiod=168000000/4/10000;
+   available every 420000 APB1 cycles, or 20 microseconds.   */
+int tperiod=168000000/4/50000;
 
 typedef struct {
     accumulated_data accum_data;
@@ -216,12 +217,19 @@ void exti_setup(int m_point)
     }
 }
 
+/* Forward declaration of buffer cleanup function.  */
+void buffer_cleanup ();
+
+/* Start a measurement.  */
 void start_measurement(int m_point)
 {
     systick_interrupt_disable ();
 
     /* Raise GPIO D14 to indicate start of measurement.  */
     gpio_set (GPIOD, GPIO14);
+
+    /* Clean up the transmission buffers.  */
+    buffer_cleanup ();
 
     /* Start the microsecond timer.  */
     timer_enable_counter (TIM5);
@@ -1126,16 +1134,28 @@ typedef struct {
   unsigned int timeskew : 8;	/* Time delay wrt. main timestamp.  */
 } channel_value_t;
 
-
 /* Structure type holding a trace frame: extensive version: 128 bits  */
 typedef struct {
   unsigned int timestamp;	/* Timestamp in microseconds since TIM5 config/overflow.  */
   channel_value_t channel[3];	/* Channel information including time skew.  */
 } frame_t;
 
+/* Clean up buffers.  */
+void buffer_cleanup (void)
+{
+#if 0
+    memset (&tx_buffer[0][1], 0, 8 * sizeof (short unsigned int));
+    memset (&tx_buffer[1][1], 0, 8 * sizeof (short unsigned int));
+#endif
+}
+
+/* ADC interrupt service routine.  */
 void adc_isr()
 {
     int m_point;
+#if 0
+    int num_samples;
+#endif
     measurement_point *mp;
     /* ADC list is fixed.  */
     const unsigned int adcs[3] = {ADC1, ADC2, ADC3};
@@ -1159,6 +1179,10 @@ void adc_isr()
     tim5_high = (unsigned short) ((tim5_now >> 16) & 0xffff);
     tx_buffer[whichone][1] = tim5_high;
     tx_buffer[whichone][2] = tim5_low;
+
+#if 0
+    num_samples = 0;
+#endif
 
     for(i = 0; i < 3; ++i)
     {
@@ -1200,12 +1224,6 @@ void adc_isr()
                 unsigned short v = mp->lastV;
                 unsigned p = c*v;
 
-		// Marker safeguard: clear the Rx and Tx GPIO markers
-		// in case "something" set them in the meantime.
-		// gpio_clear (GPIOD, GPIO14);
-		gpio_clear (GPIOD, GPIO15);
-		//gpio_toggle(GPIOD, GPIO12);
-
 		// Copy current and voltage to DMA buffer.  Add the channel ID+1
 		// in the high 4 bits.
 		// Store values in currently selected buffer.
@@ -1230,6 +1248,10 @@ void adc_isr()
                     a_data->peak_voltage = v;
                 if(c > a_data->peak_current)
                     a_data->peak_current = c;
+
+#if 0
+		num_samples += 1;
+#endif
             }
 
             mp->idx = 1-mp->idx;
@@ -1247,11 +1269,19 @@ void adc_isr()
         }
     }
 
-    /* Send the currently filled buffer (size is 1/2 of the entire variable.)  */
-    spi_dma_transceive (tx_buffer[whichone], sizeof(tx_buffer) / sizeof (unsigned short) / 2,  &dummy_rx_buf, 0);
+#if 0
+    /* Send out the frame and change buffers only if there's something to communicate...  */
+    if (num_samples > 0)
+    {
+#endif
+	/* Send the currently filled buffer (size is 1/2 of the entire variable.)  */
+	spi_dma_transceive (tx_buffer[whichone], sizeof (tx_buffer) / sizeof (unsigned short) / 2,  &dummy_rx_buf, 0);
 
-    /* Flip the buffer index.  */
-    whichone = (whichone + 1) & 1;
+	/* Flip the buffer index.  */
+	whichone = 1 - whichone;
+#if 0
+    }
+#endif
 }
 
 int milliseconds = 0;
