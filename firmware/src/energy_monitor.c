@@ -228,13 +228,6 @@ void start_measurement(int m_point)
     /* Raise GPIO D14 to indicate start of measurement.  */
     gpio_set (GPIOD, GPIO14);
 
-    /* Clean up the transmission buffers.  */
-    buffer_cleanup ();
-
-    /* Start the microsecond timer.  */
-    timer_enable_counter (TIM5);
-    tim5_value = timer_get_counter (TIM5);
-
     /* Enable SPI1 peripheral.  */
     spi_enable(SPI1);
 
@@ -521,10 +514,9 @@ void timer5_setup (void)
     timer_set_master_mode (TIM5, TIM_CR2_MMS_UPDATE);
     /* Generate update events only on overflow.  */
     timer_update_on_overflow (TIM5);
+    timer_set_repetition_counter (TIM5, 0);
     timer_disable_preload (TIM5);
-    /* Do not enable the timer NOW - just lock the values.  */
     timer_enable_counter (TIM5);
-    timer_disable_counter (TIM5);
 }
 
 /* Set up the SPI.  Pin assignment: use plain alternate function 5:
@@ -1016,6 +1008,9 @@ int main(void)
         flash_serial('E', 'E', '0', '0');
     }
 
+    /* Clean up the transmission buffers.  */
+    buffer_cleanup ();
+
     // 1ms tick
     systick_set_reload(168000);
     systick_set_clocksource(STK_CSR_CLKSOURCE);
@@ -1050,7 +1045,7 @@ int main(void)
     adc_setup();
     spi_setup ();
     timer2_setup();
-    timer5_setup();
+    timer5_setup ();
     exti_timer_setup();
 
     gpio_toggle(GPIOA, GPIO12);
@@ -1143,7 +1138,7 @@ typedef struct {
 /* Clean up buffers.  */
 void buffer_cleanup (void)
 {
-#if 0
+#if 1
     memset (&tx_buffer[0][1], 0, 8 * sizeof (short unsigned int));
     memset (&tx_buffer[1][1], 0, 8 * sizeof (short unsigned int));
 #endif
@@ -1153,9 +1148,6 @@ void buffer_cleanup (void)
 void adc_isr()
 {
     int m_point;
-#if 0
-    int num_samples;
-#endif
     measurement_point *mp;
     /* ADC list is fixed.  */
     const unsigned int adcs[3] = {ADC1, ADC2, ADC3};
@@ -1179,10 +1171,6 @@ void adc_isr()
     tim5_high = (unsigned short) ((tim5_now >> 16) & 0xffff);
     tx_buffer[whichone][1] = tim5_high;
     tx_buffer[whichone][2] = tim5_low;
-
-#if 0
-    num_samples = 0;
-#endif
 
     for(i = 0; i < 3; ++i)
     {
@@ -1248,10 +1236,6 @@ void adc_isr()
                     a_data->peak_voltage = v;
                 if(c > a_data->peak_current)
                     a_data->peak_current = c;
-
-#if 0
-		num_samples += 1;
-#endif
             }
 
             mp->idx = 1-mp->idx;
@@ -1269,19 +1253,15 @@ void adc_isr()
         }
     }
 
-#if 0
     /* Send out the frame and change buffers only if there's something to communicate...  */
-    if (num_samples > 0)
+    if(1)
     {
-#endif
 	/* Send the currently filled buffer (size is 1/2 of the entire variable.)  */
 	spi_dma_transceive (tx_buffer[whichone], sizeof (tx_buffer) / sizeof (unsigned short) / 2,  &dummy_rx_buf, 0);
 
 	/* Flip the buffer index.  */
 	whichone = 1 - whichone;
-#if 0
     }
-#endif
 }
 
 int milliseconds = 0;
