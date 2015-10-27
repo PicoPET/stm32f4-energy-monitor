@@ -266,6 +266,9 @@ void start_measurement(int m_point)
         default:
             error_condition(); return;
     }
+
+    /* Clean up the transmission buffers.  */
+    buffer_cleanup (m_points[m_point].assigned_adc);
 }
 
 void stop_measurement(int m_point)
@@ -1008,9 +1011,6 @@ int main(void)
         flash_serial('E', 'E', '0', '0');
     }
 
-    /* Clean up the transmission buffers.  */
-    buffer_cleanup ();
-
     // 1ms tick
     systick_set_reload(168000);
     systick_set_clocksource(STK_CSR_CLKSOURCE);
@@ -1136,11 +1136,11 @@ typedef struct {
 } frame_t;
 
 /* Clean up buffers.  */
-void buffer_cleanup (void)
+void buffer_cleanup (int channel)
 {
 #if 1
-    memset (&tx_buffer[0][1], 0, 8 * sizeof (short unsigned int));
-    memset (&tx_buffer[1][1], 0, 8 * sizeof (short unsigned int));
+    memset (&tx_buffer[0][3 + 2 * channel], 0, 2 * sizeof (short unsigned int));
+    memset (&tx_buffer[1][3 + 2 * channel], 0, 2 * sizeof (short unsigned int));
 #endif
 }
 
