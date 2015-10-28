@@ -119,17 +119,17 @@ typedef struct {
     uint64_t current_time;
 } instant_data;
 
-/* Sample at 50kS/s (2 periods/sample), 1 out of 4 channels active for now.
+/* Sample at 20kS/s (2 periods/sample), 1 out of 4 channels active for now.
 
-   One 128-bit buffer will be sent every 10 microseconds (3.5 microseconds
+   One buffer will be sent every 25 microseconds (3.5 microseconds
    xfer time for 128 bits, 4 microseconds for 144 bits).
 
    The divide-by-4 is necessary to adjust for the 1/2-sysclk APB1 clock,
    furter divided by 2 due to prescaler divisor being equal to 1.  The resulting
-   period of 21000 cycles of 84 MHz APB1 clock results in a frequency of 40 kHz
+   period (in cycles of 84 MHz APB1 clock) results in a frequency of 40 kHz
    for I or V component in alternation, leading to a complete measurement being
-   available every 420000 APB1 cycles, or 20 microseconds.   */
-int tperiod=168000000/4/50000;
+   available every 4200 APB1 cycles, or 50 microseconds.   */
+int tperiod = 168000000/4/40000;
 
 typedef struct {
     accumulated_data accum_data;
@@ -232,7 +232,7 @@ void start_measurement(int m_point)
     spi_enable(SPI1);
 
     /* FIXME/TODO: FORNOW: Enable ADC IRQs before power-up to catch spurious ones.
-       Ideally, should clear any pending requests before enabling the IRQs.  */
+       Ideally, we should clear any pending requests before enabling the IRQs.  */
     nvic_enable_irq(NVIC_ADC_IRQ);
 
     m_points[m_point].running = 1;
@@ -513,7 +513,9 @@ void timer5_setup (void)
     timer_reset (TIM5);
     timer_set_mode (TIM5, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
     timer_set_period (TIM5, 1000000000 - 1);
-    timer_set_prescaler (TIM5, 168 - 1);
+    /* Set prescaler to 83 (non-zero value means TIM5 will be driven by full
+       APB1 frequency which is half the CPU clock.)  */
+    timer_set_prescaler (TIM5, (168 / 2) - 1);
     timer_set_master_mode (TIM5, TIM_CR2_MMS_UPDATE);
     /* Generate update events only on overflow.  */
     timer_update_on_overflow (TIM5);
@@ -1020,6 +1022,8 @@ int main(void)
 
     gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO9 | GPIO11 | GPIO12);
     gpio_mode_setup(GPIOD, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO15 | GPIO14 | GPIO13 | GPIO12);
+    gpio_mode_setup(GPIOB, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO11 | GPIO13 | GPIO15);
+    gpio_clear (GPIOB, GPIO11 | GPIO13 | GPIO15);
     gpio_set_af(GPIOA, GPIO_AF10, GPIO9 | GPIO11 | GPIO12);
 
     for(i = 0;i < 4; ++i)
@@ -1158,6 +1162,9 @@ void adc_isr()
     /* Disable ADC IRQs until DMA+SPI transfer is done.  */
     nvic_disable_irq (NVIC_ADC_IRQ);
 
+    /* Mark start of ISR.  */
+    gpio_set (GPIOB, GPIO11);
+
     /* Get value of TIM5 counter.  */
     tim5_now = timer_get_counter (TIM5);
 
@@ -1212,6 +1219,9 @@ void adc_isr()
                 unsigned short v = mp->lastV;
                 unsigned p = c*v;
 
+		/* Mark start of handling.  */
+		gpio_set (GPIOB, GPIO13);
+
 		// Copy current and voltage to DMA buffer.  Add the channel ID+1
 		// in the high 4 bits.
 		// Store values in currently selected buffer.
@@ -1236,6 +1246,9 @@ void adc_isr()
                     a_data->peak_voltage = v;
                 if(c > a_data->peak_current)
                     a_data->peak_current = c;
+
+		/* Mark end of handling.  */
+		gpio_clear (GPIOB, GPIO13);
             }
 
             mp->idx = 1-mp->idx;
@@ -1262,6 +1275,9 @@ void adc_isr()
 	/* Flip the buffer index.  */
 	whichone = 1 - whichone;
     }
+
+    /* Mark end of ISR.  */
+    gpio_clear (GPIOB, GPIO11);
 }
 
 int milliseconds = 0;
