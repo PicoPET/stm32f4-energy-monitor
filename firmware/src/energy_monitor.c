@@ -590,6 +590,9 @@ void spi_setup ()
     //gpio_toggle(GPIOD, GPIO15);
 }
 
+/* Use 16-bit DMA xfers.  */
+#define USE_16BIT_TRANSFERS
+
 /* Enable DMA interrupts. The priority of the DMA interrupts must be higher
    than the priority of the ADC interrupts to ensure the integrity of DMA
    backlog handling (dma_transceive called from DMA context must run at higher
@@ -612,7 +615,8 @@ void dma_setup(void)
     rcc_periph_clock_enable (RCC_DMA2);
     rcc_periph_clock_enable (RCC_DMA2);
 
-    /* Disable DMA streams.  */
+    /* RM0090 10.3.17(1): If the stream is enabled, disable it.
+       Disable streams prior to stream programming.  */
     dma_disable_stream (DMA2, DMA_STREAM2);
     dma_disable_stream (DMA2, DMA_STREAM3);
 
@@ -620,12 +624,61 @@ void dma_setup(void)
     dma_stream_reset(DMA2, DMA_STREAM2);
     dma_stream_reset(DMA2, DMA_STREAM3);
 
-    /* Enable DMA interrupts.  */
+    /* Rx DMA configuration.  Note it has higher priority to avoid overrun.  */
+    /* 10.3.17(2): Set the peripheral port register address.  */
+    dma_set_peripheral_address(DMA2, DMA_STREAM2, (uint32_t)&SPI1_DR);
+
+    dma_channel_select (DMA2, DMA_STREAM2, DMA_SxCR_CHSEL_3);
+    /* 10.3.17(6): If the peripheral is intended to be the flow controller... */
+    /* 10.3.17(7): Configure the stream priority.  */
+    dma_set_priority(DMA2, DMA_STREAM2, DMA_SxCR_PL_VERY_HIGH);
+    /* 10.3.17(8): Configure the FIFO usage.  */
+    /* 10.3.17(9): Configure the data transfer direction...  */
+    dma_set_transfer_mode (DMA2, DMA_STREAM2, DMA_SxCR_DIR_PERIPHERAL_TO_MEM);
+    /* 10.3.17(9): ...peripheral and memory incremented/fixed mode,
+		  single or burst transactions, peripheral
+		  and memory data widths, Circular mode,
+		  Double buffer mode and interrupts after
+		  half and/or full transfer, and/or errors.*/
+#ifdef USE_16BIT_TRANSFERS
+    dma_set_peripheral_size(DMA2, DMA_STREAM2, DMA_SxCR_PSIZE_16BIT);
+    dma_set_memory_size(DMA2, DMA_STREAM2, DMA_SxCR_MSIZE_16BIT);
+#else
+    dma_set_peripheral_size(DMA2, DMA_STREAM2, DMA_SxCR_PSIZE_8BIT);
+    dma_set_memory_size(DMA2, DMA_STREAM2, DMA_SxCR_MSIZE_8BIT);
+#endif
+    dma_enable_memory_increment_mode(DMA2, DMA_STREAM2);
+
+    /* Tx DMA configuration.  */
+    /* 10.3.17(2): Set the peripheral port register address.  */
+    dma_set_peripheral_address(DMA2, DMA_STREAM3, (uint32_t)&SPI1_DR);
+    dma_channel_select (DMA2, DMA_STREAM3, DMA_SxCR_CHSEL_3);
+    /* 10.3.17(6): If the peripheral is intended to be the flow controller... */
+    /* 10.3.17(7): Configure the stream priority.  */
+    dma_set_priority(DMA2, DMA_STREAM3, DMA_SxCR_PL_HIGH);
+    /* 10.3.17(8): Configure the FIFO usage.  */
+    /* 10.3.17(9): Configure the data transfer direction...  */
+    dma_set_transfer_mode (DMA2, DMA_STREAM3, DMA_SxCR_DIR_MEM_TO_PERIPHERAL);
+    /* 10.3.17(9): ...peripheral and memory incremented/fixed mode,
+		  single or burst transactions, peripheral
+		  and memory data widths, Circular mode,
+		  Double buffer mode and interrupts after
+		  half and/or full transfer, and/or errors.*/
+#ifdef USE_16BIT_TRANSFERS
+    dma_set_peripheral_size(DMA2, DMA_STREAM3, DMA_SxCR_PSIZE_16BIT);
+    dma_set_memory_size(DMA2, DMA_STREAM3, DMA_SxCR_MSIZE_16BIT);
+#else
+    dma_set_peripheral_size(DMA2, DMA_STREAM3, DMA_SxCR_PSIZE_8BIT);
+    dma_set_memory_size(DMA2, DMA_STREAM3, DMA_SxCR_MSIZE_8BIT);
+#endif
+    dma_enable_memory_increment_mode(DMA2, DMA_STREAM3);
+
+    /* Enable DMA interrupts in general, but disable DMA2 xfer complete ones.  */
+    dma_disable_transfer_complete_interrupt(DMA2, DMA_STREAM2);
+    dma_disable_transfer_complete_interrupt(DMA2, DMA_STREAM3);
+
     dma_int_enable ();
 }
-
-/* Use 16-bit xfers.  */
-#define USE_16BIT_TRANSFERS
 
 /* Asssume "previous" transfers both completed.
    Current value is the number of ongoing transfers.  */
@@ -661,7 +714,7 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 	int tx_len;
 	int rx_len;
 
-	/* gpio_toggle (GPIOD, GPIO12); */
+	gpio_toggle (GPIOB, GPIO15);
 	/* Check for 0 length in both tx and rx: if so, process backlog.  */
 	if ((tx_count == 0) && (rx_count == 0)) {
 		/* Can only do this when there's no active transfer and a backlog  */
@@ -723,100 +776,47 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 	dma_disable_stream (DMA2, DMA_STREAM2);
 	dma_disable_stream (DMA2, DMA_STREAM3);
 
-	/* Set up rx dma, note it has higher priority to avoid overrun */
+	/* Set up rx dma */
 	if (rx_len > 0) {
-		/* 10.3.17(2): Set the peripheral port register address.  */
-		dma_set_peripheral_address(DMA2, DMA_STREAM2, (uint32_t)&SPI1_DR);
 		/* 10.3.17(3): Set the memory address.  */
 		dma_set_memory_address(DMA2, DMA_STREAM2, (uint32_t)rx_buf);
 		/* 10.3.17(4): Configure the total number of data items to be transferred.  */
 		dma_set_number_of_data(DMA2, DMA_STREAM2, rx_len);
 		/* 10.3.17(5): Select the DMA channel (request).  */
-		dma_channel_select (DMA2, DMA_STREAM2, DMA_SxCR_CHSEL_3);
-		/* 10.3.17(6): If the peripheral is intended to be the flow controller... */
-		/* 10.3.17(7): Configure the stream priority.  */
-		dma_set_priority(DMA2, DMA_STREAM2, DMA_SxCR_PL_VERY_HIGH);
-		/* 10.3.17(8): Configure the FIFO usage.  */
-		/* 10.3.17(9): Configure the data transfer direction...  */
-		dma_set_transfer_mode (DMA2, DMA_STREAM2, DMA_SxCR_DIR_PERIPHERAL_TO_MEM);
-		/* 10.3.17(9): ...peripheral and memory incremented/fixed mode,
-				  single or burst transactions, peripheral
-				  and memory data widths, Circular mode,
-				  Double buffer mode and interrupts after
-				  half and/or full transfer, and/or errors.*/
-#ifdef USE_16BIT_TRANSFERS
-		dma_set_peripheral_size(DMA2, DMA_STREAM2, DMA_SxCR_PSIZE_16BIT);
-		dma_set_memory_size(DMA2, DMA_STREAM2, DMA_SxCR_MSIZE_16BIT);
-#else
-		dma_set_peripheral_size(DMA2, DMA_STREAM2, DMA_SxCR_PSIZE_8BIT);
-		dma_set_memory_size(DMA2, DMA_STREAM2, DMA_SxCR_MSIZE_8BIT);
-#endif
-		dma_enable_memory_increment_mode(DMA2, DMA_STREAM2);
 	}
 
 	/* Set up tx dma */
 	if (tx_len > 0) {
-		/* 10.3.17(2): Set the peripheral port register address.  */
-		dma_set_peripheral_address(DMA2, DMA_STREAM3, (uint32_t)&SPI1_DR);
 		/* 10.3.17(3): Set the memory address.  */
 		dma_set_memory_address(DMA2, DMA_STREAM3, (uint32_t)tx_buf);
 		/* 10.3.17(4): Configure the total number of data items to be transferred.  */
 		dma_set_number_of_data(DMA2, DMA_STREAM3, tx_len);
 		/* 10.3.17(5): Select the DMA channel (request).  */
-		dma_channel_select (DMA2, DMA_STREAM3, DMA_SxCR_CHSEL_3);
-		/* 10.3.17(6): If the peripheral is intended to be the flow controller... */
-		/* 10.3.17(7): Configure the stream priority.  */
-		dma_set_priority(DMA2, DMA_STREAM3, DMA_SxCR_PL_HIGH);
-		/* 10.3.17(8): Configure the FIFO usage.  */
-		/* 10.3.17(9): Configure the data transfer direction...  */
-		dma_set_transfer_mode (DMA2, DMA_STREAM3, DMA_SxCR_DIR_MEM_TO_PERIPHERAL);
-		/* 10.3.17(9): ...peripheral and memory incremented/fixed mode,
-				  single or burst transactions, peripheral
-				  and memory data widths, Circular mode,
-				  Double buffer mode and interrupts after
-				  half and/or full transfer, and/or errors.*/
-#ifdef USE_16BIT_TRANSFERS
-		dma_set_peripheral_size(DMA2, DMA_STREAM3, DMA_SxCR_PSIZE_16BIT);
-		dma_set_memory_size(DMA2, DMA_STREAM3, DMA_SxCR_MSIZE_16BIT);
-#else
-		dma_set_peripheral_size(DMA2, DMA_STREAM3, DMA_SxCR_PSIZE_8BIT);
-		dma_set_memory_size(DMA2, DMA_STREAM3, DMA_SxCR_MSIZE_8BIT);
-#endif
-		dma_enable_memory_increment_mode(DMA2, DMA_STREAM3);
 	}
 
-	/* Enable dma transfer complete interrupts */
+	/* Enable dma transfer complete interrupts.  10.3.17(10): Activate the stream(s). */
 	if (rx_len > 0) {
 		dma_enable_transfer_complete_interrupt(DMA2, DMA_STREAM2);
-	}
-	if (tx_len > 0) {
-		dma_enable_transfer_complete_interrupt(DMA2, DMA_STREAM3);
-	}
-
-	/* 10.3.17(10): Activate the stream(s).  */
-	if (rx_len > 0) {
 		dma_enable_stream (DMA2, DMA_STREAM2);
 	}
 	if (tx_len > 0) {
+		dma_enable_transfer_complete_interrupt(DMA2, DMA_STREAM3);
 		dma_enable_stream (DMA2, DMA_STREAM3);
 	}
 
-	/* Enable the spi transfer via dma
-	 * This will immediately start the transmission,
-	 * after which when the receive is complete, the
-	 * receive dma will activate
-	 ZC FIXME: what'zat?
-	 */
+	/* Start Rx if requested.  */
 	if (rx_len > 0) {
 		/* gpio_set (GPIOD, GPIO14); */
 		spi_enable_rx_dma(SPI1);
 	}
+
+	/* Start Tx if requested.  */
 	if (tx_len > 0) {
 		gpio_set (GPIOD, GPIO15);
 		spi_enable_tx_dma(SPI1);
 	}
 
-	/*  gpio_toggle (GPIOD, GPIO12);  */
+	gpio_clear (GPIOB, GPIO15);
 	return 0;
 }
 
