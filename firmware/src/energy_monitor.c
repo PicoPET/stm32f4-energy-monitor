@@ -119,17 +119,17 @@ typedef struct {
     uint64_t current_time;
 } instant_data;
 
-/* Sample at 20kS/s (2 periods/sample), 1 out of 4 channels active for now.
+/* Sample at 25kS/s (2 periods/sample), 1 out of 3 channels active for now.
 
-   One buffer will be sent every 25 microseconds (3.5 microseconds
+   One buffer will be sent every 20 microseconds (3.5 microseconds
    xfer time for 128 bits, 4 microseconds for 144 bits).
 
    The divide-by-4 is necessary to adjust for the 1/2-sysclk APB1 clock,
    furter divided by 2 due to prescaler divisor being equal to 1.  The resulting
-   period (in cycles of 84 MHz APB1 clock) results in a frequency of 40 kHz
+   period (in cycles of 84 MHz APB1 clock) results in a frequency of 50 kHz
    for I or V component in alternation, leading to a complete measurement being
-   available every 4200 APB1 cycles, or 50 microseconds.   */
-int tperiod = 168000000/4/40000;
+   available every 1680 APB1 cycles, or 40 microseconds.   */
+int tperiod = 168000000/4/50000;
 
 typedef struct {
     accumulated_data accum_data;
