@@ -126,10 +126,10 @@ typedef struct {
 
    The divide-by-4 is necessary to adjust for the 1/2-sysclk APB1 clock,
    furter divided by 2 due to prescaler divisor being equal to 1.  The resulting
-   period (in cycles of 84 MHz APB1 clock) results in a frequency of 50 kHz
+   period (in cycles of 84 MHz APB1 clock) results in a frequency of 40 kHz
    for I or V component in alternation, leading to a complete measurement being
-   available every 1680 APB1 cycles, or 40 microseconds.   */
-int tperiod = 168000000/4/50000;
+   available every 2100 APB1 cycles, or 50 microseconds.   */
+int tperiod = 168000000/4/40000;
 
 typedef struct {
     accumulated_data accum_data;
@@ -540,7 +540,7 @@ void spi_setup ()
 	*/
     gpio_mode_setup (GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO4 | GPIO5 | GPIO7);
     gpio_mode_setup (GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO6);
-    /* Do not set ouput options on pin PA6 - it's an input.  */
+    /* Do not set output options on pin PA6 - it's an input.  */
     gpio_set_output_options (GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, GPIO4 | GPIO5 | GPIO7);
     gpio_set_af (GPIOA, GPIO_AF5, GPIO4 | GPIO5 | GPIO6 | GPIO7);
 
@@ -964,12 +964,12 @@ void adc_setup()
 void exti_timer_setup()
 {
     // Timer is used for deboucing (is it?)
-    // If output on trigger is the same 3ms later, accept as input
+    // If output on trigger is the same 1ms later, accept as input
     rcc_peripheral_enable_clock(&RCC_APB1ENR, RCC_APB1ENR_TIM3EN);
     timer_reset(TIM3);
     timer_set_mode(TIM3, TIM_CR1_CKD_CK_INT, TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
-    timer_set_period(TIM3, 300);
-    timer_set_prescaler(TIM3, 1679);
+    timer_set_period(TIM3, 50);	/* Count 50 periods.  */
+    timer_set_prescaler(TIM3, 1679);	/* Downscale to PCLK_AHB1 / 1680, or 20 microseconds period.  */
     timer_set_clock_division(TIM3, TIM_CR1_CKD_CK_INT);
     timer_set_master_mode(TIM3, TIM_CR2_MMS_UPDATE);
     timer_enable_irq(TIM3, TIM_DIER_UIE);
@@ -1082,7 +1082,7 @@ void exti_isr()
     for(i = 0; i < 4; ++i)
         exti_reset_request(m_points[i].trigger_pin);
 
-    if(status == -1 || 1 )
+    if(status == -1 || 1)
     {
         for(i = 0; i < 4; ++i)
         {
@@ -1092,7 +1092,7 @@ void exti_isr()
             if(gpio_get(m_points[i].trigger_port, m_points[i].trigger_pin))
             {
                 if(!m_points[i].running)
-                start_measurement(i);
+                    start_measurement(i);
             }
             else
             {
