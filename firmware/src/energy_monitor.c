@@ -1272,11 +1272,11 @@ void adc_isr()
     gpio_clear (GPIOB, GPIO13);
 
     /* Send the currently filled buffer (size is 1/2 of the entire variable.)  */
-    if (got_full_result != 0x4141)
+    if (1 || got_full_result != 0x4141)
         spi_dma_transceive (tx_buffer[whichone], 5, &dummy_rx_buf, 0);
 
     /* Flip the buffer index.  */
-    if (got_full_result != 0x4141)
+    if (1 || got_full_result != 0x4141)
         whichone = 1 - whichone;
 
     /* Mark end of ISR.  */
