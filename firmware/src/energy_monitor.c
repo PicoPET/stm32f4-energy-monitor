@@ -1158,6 +1158,7 @@ void adc_isr()
     int i;
     volatile unsigned int tim5_now;
     register unsigned short tim5_high, tim5_low;
+    register unsigned short got_full_result;
 
     /* Disable ADC IRQs until DMA+SPI transfer is done.  */
     nvic_disable_irq (NVIC_ADC_IRQ);
@@ -1171,6 +1172,9 @@ void adc_isr()
     /* If a transfer is ongoing, raise an error condition.  */
     if (gpio_get (GPIOD, GPIO15) != 0)
       error_condition ();
+
+    /* Assume no full result was collected.  */
+    got_full_result = 0x4141;
 
     /* Store the TIM5 reading at the start of processing.  */
     tim5_value = tim5_now;
@@ -1218,6 +1222,7 @@ void adc_isr()
                 unsigned short c = mp->lastI;
                 unsigned short v = mp->lastV;
                 unsigned p = c*v;
+		got_full_result = 0x4242;
 
 		/* Mark start of handling.  */
 		gpio_set (GPIOB, GPIO13);
@@ -1225,8 +1230,8 @@ void adc_isr()
 		// Copy current and voltage to DMA buffer.  Add the channel ID+1
 		// in the high 4 bits.
 		// Store values in currently selected buffer.
-		tx_buffer[whichone][3 + (i * 2)] = (c & 0xfff) | (unsigned short) ((i + 1) << 12);
-		tx_buffer[whichone][4 + (i * 2)] = (v & 0xfff) | (unsigned short) ((i + 1) << 12);
+		tx_buffer[whichone][3] = (c & 0xfff) | (unsigned short) ((i + 1) << 12);
+		tx_buffer[whichone][4] = (v & 0xfff) | (unsigned short) ((i + 1) << 12);
 
                 if(a_data->elapsed_time > 0) // ignore first sample (lastP = 0)
                 {
@@ -1246,9 +1251,6 @@ void adc_isr()
                     a_data->peak_voltage = v;
                 if(c > a_data->peak_current)
                     a_data->peak_current = c;
-
-		/* Mark end of handling.  */
-		gpio_clear (GPIOB, GPIO13);
             }
 
             mp->idx = 1-mp->idx;
@@ -1266,15 +1268,16 @@ void adc_isr()
         }
     }
 
-    /* Send out the frame and change buffers only if there's something to communicate...  */
-    if(1)
-    {
-	/* Send the currently filled buffer (size is 1/2 of the entire variable.)  */
-	spi_dma_transceive (tx_buffer[whichone], sizeof (tx_buffer) / sizeof (unsigned short) / 2,  &dummy_rx_buf, 0);
+    /* Mark end of handling.  */
+    gpio_clear (GPIOB, GPIO13);
 
-	/* Flip the buffer index.  */
-	whichone = 1 - whichone;
-    }
+    /* Send the currently filled buffer (size is 1/2 of the entire variable.)  */
+    if (got_full_result == 0x4141)
+        spi_dma_transceive (tx_buffer[whichone], 5, &dummy_rx_buf, 0);
+
+    /* Flip the buffer index.  */
+    if (got_full_result == 0x4141)
+        whichone = 1 - whichone;
 
     /* Mark end of ISR.  */
     gpio_clear (GPIOB, GPIO11);
