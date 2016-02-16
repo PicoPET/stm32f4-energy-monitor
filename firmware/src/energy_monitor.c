@@ -524,6 +524,9 @@ void timer5_setup (void)
     timer_enable_counter (TIM5);
 }
 
+/* Use 8-bit DMA xfers.  */
+#define USE_8BIT_TRANSFERS
+
 /* Set up the SPI.  Pin assignment: use plain alternate function 5:
     - SPI1_NSS: PA4
     - SPI1_SCK: PA5
@@ -538,11 +541,11 @@ void spi_setup ()
 	- no pull-up/pull-down direction
 	- alternate function #5 (SPI1/SPI2/I2S2/I2S2ext)
 	*/
-    gpio_mode_setup (GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO4 | GPIO5 | GPIO7);
-    gpio_mode_setup (GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO6);
-    /* Do not set output options on pin PA6 - it's an input.  */
-    gpio_set_output_options (GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, GPIO4 | GPIO5 | GPIO7);
     gpio_set_af (GPIOA, GPIO_AF5, GPIO4 | GPIO5 | GPIO6 | GPIO7);
+    gpio_mode_setup (GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO4 | GPIO5 | GPIO7);
+    gpio_mode_setup (GPIOA, GPIO_MODE_AF, GPIO_PUPD_PULLDOWN, GPIO6);
+    /* Do not set output options on pins PA4, PA5, PA7 - they're all inputs.  */
+    gpio_set_output_options (GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, GPIO6);
 
     /* Enable SPI1 clock.  */
     rcc_peripheral_enable_clock (&RCC_APB2ENR,
@@ -561,37 +564,37 @@ void spi_setup ()
     /* SPI1: disable CRC.  */
     spi_disable_crc(SPI1);
 
-    /* Init master on SPI1:
-	- baudrate 1/2 the maximum (84/2 == 42 Mbaud)
-	- pull clock high when idle
+    /* Init slave on SPI1:
+        - full_duplex mode
+	- assume clock low when idle (polarity 0, transition #0 is rising edge)
 	- make data stable on falling edge of clock (transition #1)
 	- send 8-bit frames
 	- send data in MSBit-first order.
 	*/
-    spi_init_master (SPI1, SPI_CR1_BAUDRATE_FPCLK_DIV_2,
-		     /* Clock polarity: pull clock high for the peripheral device.  */
-		     SPI_CR1_CPOL_CLK_TO_1_WHEN_IDLE,
-		     /* CPHA: Clock phase: read on rising edge of clock.  */
-		     SPI_CR1_CPHA_CLK_TRANSITION_1,
-		     /* DFF: Data frame format (8 or 16 bit): 16 bit.  */
-		     SPI_CR1_DFF_16BIT,
-		     /* Most or Least Sig Bit First: MSB first. */
-		     SPI_CR1_MSBFIRST);
+    /* 28.3.2.1 Set the DFF bit.  */
+    spi_set_dff_8bit (SPI1);
+    /* 28.3.2.2 Set tge CPOL and CPHA bits.  */
+    spi_set_clock_polarity_0 (SPI1);
+    spi_set_clock_phase_1 (SPI1);
+    /* 28.3.2.3 The frame format (MSB-first or LSB-first)  */
+    spi_send_msb_first (SPI1);
+    spi_set_full_duplex_mode (SPI1);
 
     //spi_enable_software_slave_management(SPI1);
-    spi_disable_software_slave_management (SPI1);
-    /* Pull /SS high (slave not selected).  */
-    /* spi_set_nss_high(SPI1);  */
-    spi_enable_ss_output (SPI1);
+    //spi_disable_software_slave_management (SPI1);
 
     /* Clean up status information.  */
     /* spi_clear_mode_fault(SPI1);  */
 
+    /* Enable slave mode.  */
+    spi_set_slave_mode (SPI1);
+
     //gpio_toggle(GPIOD, GPIO15);
 }
 
-/* Use 16-bit DMA xfers.  */
-#define USE_16BIT_TRANSFERS
+/* Asssume "previous" DMA transfers both completed.
+   Current value is the number of ongoing transfers.  */
+unsigned int transceive_status;
 
 /* Enable DMA interrupts. The priority of the DMA interrupts must be higher
    than the priority of the ADC interrupts to ensure the integrity of DMA
@@ -677,13 +680,14 @@ void dma_setup(void)
     dma_disable_transfer_complete_interrupt(DMA2, DMA_STREAM2);
     dma_disable_transfer_complete_interrupt(DMA2, DMA_STREAM3);
 
+    /* Clear the transceive count.  */
+    transceive_status = 0;
+
+    /* Enable the DMA.  */
     dma_int_enable ();
 }
 
-/* Asssume "previous" transfers both completed.
-   Current value is the number of ongoing transfers.  */
-unsigned int transceive_status = 0;
-
+#ifdef USE_16BIT_TRANSFERS
 /* Backlog entry type.  Assume 16-bit data.  */
 typedef struct {
   const unsigned short *tx_base;
@@ -691,6 +695,15 @@ typedef struct {
   const unsigned short *rx_base;
   int rx_size;
 } backlog_entry_t;
+#else
+/* Backlog entry type.  Assume 8-bit data.  */
+typedef struct {
+  const uint8_t *tx_base;
+  int tx_size;
+  const uint8_t *rx_base;
+  int rx_size;
+} backlog_entry_t;
+#endif
 
 #define BACKLOG_DEPTH 4
 /* Backlog circular buffer.  */
@@ -701,7 +714,35 @@ int next_to_send = 0;
 /* Number of backlog entries.  */
 int backlog_used = 0;
 
-int16_t dummy_rx_buf;
+unsigned int whichone = 0;
+
+/* Structure type holding a single incremental record.  */
+typedef struct {
+  unsigned int current : 12;	/* Raw current measurement.  */
+  unsigned int voltage : 12;	/* Raw voltage measurement.  */
+  unsigned int timeskew : 8;	/* Time delay wrt. main timestamp.  */
+} channel_value_t;
+
+/* Structure type holding a trace frame: extensive version: 128 bits  */
+typedef struct {
+  unsigned int timestamp;	/* Timestamp in microseconds since TIM5 config/overflow.  */
+  channel_value_t channel[3];	/* Channel information including time skew.  */
+} frame_t;
+
+/* ZC: Tx/Rx buffers for testing. */
+#ifdef USE_16BIT_TRANSFERS
+uint16_t tx_buffer[2][4] = {
+  { 0xa5a5, 0x5a5a, 0xffff, 0x0000 },
+  { 0x1234, 0x5678, 0x9abc, 0xdef0 }};
+
+uint16_t dummy_rx_buf[4];
+#else
+uint8_t tx_buffer[2][4] = {
+  { 0xa5, 0x5a, 0xff, 0x00 },
+  { 0x12, 0x34, 0x56, 0x78 }};
+
+uint8_t dummy_rx_buf[4];
+#endif
 
 #ifdef USE_16BIT_TRANSFERS
 static int spi_dma_transceive(const uint16_t *tx_addr, int tx_count, uint16_t *rx_addr, int rx_count)
@@ -709,12 +750,18 @@ static int spi_dma_transceive(const uint16_t *tx_addr, int tx_count, uint16_t *r
 static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_addr, int rx_count)
 #endif
 {
+#ifdef  USE_16BIT_TRANSFERS
 	const unsigned short *tx_buf;
 	const unsigned short *rx_buf;
+#else
+	const uint8_t *tx_buf;
+	const uint8_t *rx_buf;
+#endif
 	int tx_len;
 	int rx_len;
 
 	gpio_toggle (GPIOB, GPIO15);
+#if 0
 	/* Check for 0 length in both tx and rx: if so, process backlog.  */
 	if ((tx_count == 0) && (rx_count == 0)) {
 		/* Can only do this when there's no active transfer and a backlog  */
@@ -764,20 +811,31 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 
 	/* Reset status flag appropriately (both 0 case caught above) */
 	transceive_status = 0;
-	if (rx_len > 0) {
+#else
+	/* If the transfer did not complete yet, return NOW
+	   with the count of outstanding transactions.  */
+	if (transceive_status > 0)
+	  return transceive_status;
+
+	/* Normal operation (no backlog, no transfer in progress).  */
+	tx_buf = tx_addr;
+	tx_len = tx_count;
+	rx_buf = rx_addr;
+	rx_len = rx_count;
+#endif
+
+	if (0 && rx_len > 0) {
 		transceive_status++ ;
 	}
 	if (tx_len > 0) {
 		transceive_status++;
 	}
 
-	/* RM0090 10.3.17(1): If the stream is enabled, disable it.
-	   Disable streams prior to stream programming.  */
-	dma_disable_stream (DMA2, DMA_STREAM2);
-	dma_disable_stream (DMA2, DMA_STREAM3);
-
 	/* Set up rx dma */
-	if (rx_len > 0) {
+	if (0 && rx_len > 0) {
+		/* RM0090 10.3.17(1): If the stream is enabled, disable it.
+		   Disable streams prior to stream programming.  */
+		dma_disable_stream (DMA2, DMA_STREAM2);
 		/* 10.3.17(3): Set the memory address.  */
 		dma_set_memory_address(DMA2, DMA_STREAM2, (uint32_t)rx_buf);
 		/* 10.3.17(4): Configure the total number of data items to be transferred.  */
@@ -787,6 +845,9 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 
 	/* Set up tx dma */
 	if (tx_len > 0) {
+		/* RM0090 10.3.17(1): If the stream is enabled, disable it.
+		   Disable streams prior to stream programming.  */
+		dma_disable_stream (DMA2, DMA_STREAM3);
 		/* 10.3.17(3): Set the memory address.  */
 		dma_set_memory_address(DMA2, DMA_STREAM3, (uint32_t)tx_buf);
 		/* 10.3.17(4): Configure the total number of data items to be transferred.  */
@@ -795,7 +856,7 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 	}
 
 	/* Enable dma transfer complete interrupts.  10.3.17(10): Activate the stream(s). */
-	if (rx_len > 0) {
+	if (0 && rx_len > 0) {
 		dma_enable_transfer_complete_interrupt(DMA2, DMA_STREAM2);
 		dma_enable_stream (DMA2, DMA_STREAM2);
 	}
@@ -805,8 +866,8 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 	}
 
 	/* Start Rx if requested.  */
-	if (rx_len > 0) {
-		/* gpio_set (GPIOD, GPIO14); */
+	if (0 && rx_len > 0) {
+		gpio_set (GPIOD, GPIO14);
 		spi_enable_rx_dma(SPI1);
 	}
 
@@ -815,6 +876,12 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 		gpio_set (GPIOD, GPIO15);
 		spi_enable_tx_dma(SPI1);
 	}
+
+	if (transceive_status)
+	  {
+	    /* Enable SPI1.  */
+	    spi_enable (SPI1);
+	  }
 
 	gpio_clear (GPIOB, GPIO15);
 	return 0;
@@ -838,7 +905,7 @@ void dma2_stream2_isr(void)
 	transceive_status--;
 
 	/* Mark end of reception.  */
-	/* gpio_clear (GPIOD, GPIO14); */
+        gpio_clear (GPIOD, GPIO14);
 
 	/* If no transfers are under way, re-enable the ADC interrupts.  */
 	if (transceive_status == 0)
@@ -846,6 +913,13 @@ void dma2_stream2_isr(void)
 	    /* Check for backlog.  If present, trigger the next transfer.  */
 	    if (backlog_used > 0)
 		spi_dma_transceive (0, 0, 0, 0);
+	    else
+	      {
+		/* TODO: Make sure transfer has completed.  */
+		/* Disable SPI1.  */
+		spi_disable (SPI1);
+	      }
+
 	    /* Enable the ADC IRQ only after the DMA setup is done.  */
 	    nvic_enable_irq (NVIC_ADC_IRQ);
 	  }
@@ -881,6 +955,12 @@ void dma2_stream3_isr(void)
 	    /* Check for backlog.  If present, trigger the next transfer.  */
 	    if (backlog_used > 0)
 		spi_dma_transceive (0, 0, 0, 0);
+	    else
+	      {
+		/* TODO: Make sure transfer has completed.  */
+		/* Disable SPI1.  */
+		spi_disable (SPI1);
+	      }
 	    /* Enable the ADC IRQ only after the DMA setup is done.  */
 	    nvic_enable_irq (NVIC_ADC_IRQ);
 	  }
@@ -993,6 +1073,7 @@ void error_condition()
     while(1);
 }
 
+
 int main(void)
 {
     int c_started=0, n, cpy, i, offset=0;
@@ -1054,13 +1135,17 @@ int main(void)
 
     gpio_toggle(GPIOA, GPIO12);
 
-
+#if 1
     usbd_dev = usbd_init(&otgfs_usb_driver, &dev, &config, usb_strings, 3, control_buffer, 128);
     usbd_register_set_config_callback(usbd_dev, usbdev_set_config);
+#endif
 
     while (1)
     {
-        usbd_poll(usbd_dev);
+      /* Run a busy loop while NSS is set.  */
+      while (gpio_get(GPIOA, GPIO4));
+      /* Set up transfer when we're selected as slave.  */
+      spi_dma_transceive (tx_buffer[0], 4, dummy_rx_buf, 0);
     }
 }
 
@@ -1120,24 +1205,6 @@ void exit(int a)
     while(1);
 }
 
-/* ZC: Tx buffer for testing. 128 bits @ 42 Mbit/s ==> at most 328125 xfers/s, 100 kS/s is OK. */
-unsigned short tx_buffer[2][9] = {
-  { 0x1234, 0x0, 0x0,  0x0, 0x0, 0x0, 0x0, 0x0, 0x0 },
-  { 0xabcd, 0xffff, 0xffff, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 }};
-unsigned int whichone = 0;
-
-/* Structure type holding a single incremental record.  */
-typedef struct {
-  unsigned int current : 12;	/* Raw current measurement.  */
-  unsigned int voltage : 12;	/* Raw voltage measurement.  */
-  unsigned int timeskew : 8;	/* Time delay wrt. main timestamp.  */
-} channel_value_t;
-
-/* Structure type holding a trace frame: extensive version: 128 bits  */
-typedef struct {
-  unsigned int timestamp;	/* Timestamp in microseconds since TIM5 config/overflow.  */
-  channel_value_t channel[3];	/* Channel information including time skew.  */
-} frame_t;
 
 /* Clean up buffers.  */
 void buffer_cleanup (int channel)
@@ -1180,8 +1247,8 @@ void adc_isr()
     tim5_value = tim5_now;
     tim5_low = (unsigned short) (tim5_now & 0xffff);
     tim5_high = (unsigned short) ((tim5_now >> 16) & 0xffff);
-    tx_buffer[whichone][1] = tim5_high;
-    tx_buffer[whichone][2] = tim5_low;
+    tx_buffer[whichone][1] = (tim5_high >> 8) & 0xff;
+    tx_buffer[whichone][2] = (tim5_high >> 8) & 0xff;
 
     for(i = 0; i < 3; ++i)
     {
@@ -1230,8 +1297,6 @@ void adc_isr()
 		// Copy current and voltage to DMA buffer.  Add the channel ID+1
 		// in the high 4 bits.
 		// Store values in currently selected buffer.
-		tx_buffer[whichone][3] = (c & 0xfff) | (unsigned short) ((i + 1) << 12);
-		tx_buffer[whichone][4] = (v & 0xfff) | (unsigned short) ((i + 1) << 12);
 
                 if(a_data->elapsed_time > 0) // ignore first sample (lastP = 0)
                 {
@@ -1271,13 +1336,13 @@ void adc_isr()
     /* Mark end of handling.  */
     gpio_clear (GPIOB, GPIO13);
 
+#if 0
     /* Send the currently filled buffer (size is 1/2 of the entire variable.)  */
-    if (1 || got_full_result != 0x4141)
-        spi_dma_transceive (tx_buffer[whichone], 5, &dummy_rx_buf, 0);
+    spi_dma_transceive (tx_buffer[whichone], 4, &dummy_rx_buf, 4);
+#endif
 
     /* Flip the buffer index.  */
-    if (1 || got_full_result != 0x4141)
-        whichone = 1 - whichone;
+    whichone = 1 - whichone;
 
     /* Mark end of ISR.  */
     gpio_clear (GPIOB, GPIO11);
