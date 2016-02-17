@@ -542,6 +542,7 @@ void spi_setup ()
 	- alternate function #5 (SPI1/SPI2/I2S2/I2S2ext)
 	*/
     gpio_set_af (GPIOA, GPIO_AF5, GPIO4 | GPIO5 | GPIO6 | GPIO7);
+    /* A call to 'gpio_mode_setup' is mandatory to see the inputs.  */
     gpio_mode_setup (GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO4 | GPIO5 | GPIO7);
     gpio_mode_setup (GPIOA, GPIO_MODE_AF, GPIO_PUPD_PULLDOWN, GPIO6);
     /* Do not set output options on pins PA4, PA5, PA7 - they're all inputs.  */
@@ -739,7 +740,7 @@ uint16_t dummy_rx_buf[4];
 #else
 uint8_t tx_buffer[2][4] = {
   { 0xa5, 0x5a, 0xff, 0x00 },
-  { 0x12, 0x34, 0x56, 0x78 }};
+  { 0x01, 0x10, 0xff, 0x00 }};
 
 uint8_t dummy_rx_buf[4];
 #endif
@@ -824,7 +825,7 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 	rx_len = rx_count;
 #endif
 
-	if (0 && rx_len > 0) {
+	if (rx_len > 0) {
 		transceive_status++ ;
 	}
 	if (tx_len > 0) {
@@ -832,7 +833,7 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 	}
 
 	/* Set up rx dma */
-	if (0 && rx_len > 0) {
+	if (rx_len > 0) {
 		/* RM0090 10.3.17(1): If the stream is enabled, disable it.
 		   Disable streams prior to stream programming.  */
 		dma_disable_stream (DMA2, DMA_STREAM2);
@@ -856,7 +857,7 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 	}
 
 	/* Enable dma transfer complete interrupts.  10.3.17(10): Activate the stream(s). */
-	if (0 && rx_len > 0) {
+	if (rx_len > 0) {
 		dma_enable_transfer_complete_interrupt(DMA2, DMA_STREAM2);
 		dma_enable_stream (DMA2, DMA_STREAM2);
 	}
@@ -866,7 +867,7 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 	}
 
 	/* Start Rx if requested.  */
-	if (0 && rx_len > 0) {
+	if (rx_len > 0) {
 		gpio_set (GPIOD, GPIO14);
 		spi_enable_rx_dma(SPI1);
 	}
@@ -1145,7 +1146,9 @@ int main(void)
       /* Run a busy loop while NSS is set.  */
       while (gpio_get(GPIOA, GPIO4));
       /* Set up transfer when we're selected as slave.  */
-      spi_dma_transceive (tx_buffer[0], 4, dummy_rx_buf, 0);
+      spi_dma_transceive (tx_buffer[1], 4, dummy_rx_buf, 0);
+      /* Do not start a new transfer until NSS goes high.  */
+      while (gpio_get(GPIOA, GPIO4) == 0);
     }
 }
 
