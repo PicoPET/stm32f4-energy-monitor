@@ -1146,7 +1146,7 @@ int main(void)
       /* Run a busy loop while NSS is set.  */
       while (gpio_get(GPIOA, GPIO4));
       /* Set up transfer when we're selected as slave.  */
-      spi_dma_transceive (tx_buffer[1], 4, dummy_rx_buf, 0);
+      spi_dma_transceive (tx_buffer[1], 4, dummy_rx_buf, 4);
       /* Do not start a new transfer until NSS goes high.  */
       while (gpio_get(GPIOA, GPIO4) == 0);
     }
