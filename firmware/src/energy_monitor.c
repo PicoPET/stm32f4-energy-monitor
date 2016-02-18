@@ -574,7 +574,7 @@ void spi_setup ()
 	*/
     /* 28.3.2.1 Set the DFF bit.  */
     spi_set_dff_8bit (SPI1);
-    /* 28.3.2.2 Set tge CPOL and CPHA bits.  */
+    /* 28.3.2.2 Set the CPOL and CPHA bits.  */
     spi_set_clock_polarity_0 (SPI1);
     spi_set_clock_phase_1 (SPI1);
     /* 28.3.2.3 The frame format (MSB-first or LSB-first)  */
@@ -919,6 +919,16 @@ void dma2_stream2_isr(void)
 		/* TODO: Make sure transfer has completed.  */
 		/* Disable SPI1.  */
 		spi_disable (SPI1);
+
+		/* Turn green/amber LED according to whether the received data
+		   are correct or not.  */
+		if (dummy_rx_buf[0] == 0x1
+		    && dummy_rx_buf[1] == 0x2
+		    && dummy_rx_buf[2] == 0x3
+		    && dummy_rx_buf[3] == 0x4)
+		  gpio_set(GPIOD, GPIO12); /* green */
+		else
+		  gpio_set(GPIOD, GPIO13); /* amber */
 	      }
 
 	    /* Enable the ADC IRQ only after the DMA setup is done.  */
@@ -1149,6 +1159,8 @@ int main(void)
       spi_dma_transceive (tx_buffer[1], 4, dummy_rx_buf, 4);
       /* Do not start a new transfer until NSS goes high.  */
       while (gpio_get(GPIOA, GPIO4) == 0);
+      /* Clear status markers of Rx correctness.  */
+      gpio_clear (GPIOD, GPIO12 | GPIO13);
     }
 }
 
