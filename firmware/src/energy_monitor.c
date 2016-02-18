@@ -575,7 +575,7 @@ void spi_setup ()
     /* 28.3.2.1 Set the DFF bit.  */
     spi_set_dff_8bit (SPI1);
     /* 28.3.2.2 Set the CPOL and CPHA bits.  */
-    spi_set_clock_polarity_0 (SPI1);
+    spi_set_clock_polarity_1 (SPI1);
     spi_set_clock_phase_1 (SPI1);
     /* 28.3.2.3 The frame format (MSB-first or LSB-first)  */
     spi_send_msb_first (SPI1);
