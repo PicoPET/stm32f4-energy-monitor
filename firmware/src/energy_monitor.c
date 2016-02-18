@@ -916,10 +916,6 @@ void dma2_stream2_isr(void)
 		spi_dma_transceive (0, 0, 0, 0);
 	    else
 	      {
-		/* TODO: Make sure transfer has completed.  */
-		/* Disable SPI1.  */
-		spi_disable (SPI1);
-
 		/* Turn green/amber LED according to whether the received data
 		   are correct or not.  */
 		if (dummy_rx_buf[0] == 0x1
@@ -966,12 +962,7 @@ void dma2_stream3_isr(void)
 	    /* Check for backlog.  If present, trigger the next transfer.  */
 	    if (backlog_used > 0)
 		spi_dma_transceive (0, 0, 0, 0);
-	    else
-	      {
-		/* TODO: Make sure transfer has completed.  */
-		/* Disable SPI1.  */
-		spi_disable (SPI1);
-	      }
+
 	    /* Enable the ADC IRQ only after the DMA setup is done.  */
 	    nvic_enable_irq (NVIC_ADC_IRQ);
 	  }
@@ -1159,6 +1150,8 @@ int main(void)
       spi_dma_transceive (tx_buffer[1], 4, dummy_rx_buf, 4);
       /* Do not start a new transfer until NSS goes high.  */
       while (gpio_get(GPIOA, GPIO4) == 0);
+      /* Assume it is safe to disable SPI now that NSS is UP.  */
+      spi_disable (SPI1);
       /* Clear status markers of Rx correctness.  */
       gpio_clear (GPIOD, GPIO12 | GPIO13);
     }
