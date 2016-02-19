@@ -739,7 +739,7 @@ uint16_t tx_buffer[2][4] = {
 uint16_t dummy_rx_buf[4];
 #else
 uint8_t tx_buffer[2][4] = {
-  { 0xa5, 0x5a, 0xff, 0x00 },
+  { 0xff, 0xff, 0xff, 0xff },
   { 0x01, 0x10, 0xff, 0x00 }};
 
 uint8_t dummy_rx_buf[4];
@@ -1079,6 +1079,7 @@ void error_condition()
 int main(void)
 {
     int c_started=0, n, cpy, i, offset=0;
+    int whichone = 0;
     short s;
 
     rcc_clock_setup_hse_3v3(&hse_8mhz_3v3[CLOCK_3V3_168MHZ]);
@@ -1147,13 +1148,15 @@ int main(void)
       /* Run a busy loop while NSS is set.  */
       while (gpio_get(GPIOA, GPIO4));
       /* Set up transfer when we're selected as slave.  */
-      spi_dma_transceive (tx_buffer[1], 4, dummy_rx_buf, 4);
+      spi_dma_transceive (tx_buffer[1 - whichone], 4, tx_buffer[whichone], 4);
       /* Do not start a new transfer until NSS goes high.  */
       while (gpio_get(GPIOA, GPIO4) == 0);
       /* Assume it is safe to disable SPI now that NSS is UP.  */
       spi_disable (SPI1);
       /* Clear status markers of Rx correctness.  */
       gpio_clear (GPIOD, GPIO12 | GPIO13);
+      /* Swap buffers.  */
+      whichone = 1 - whichone;
     }
 }
 
