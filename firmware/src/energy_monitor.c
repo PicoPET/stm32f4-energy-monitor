@@ -1145,16 +1145,30 @@ int main(void)
 
     while (1)
     {
+      volatile uint32_t dummy;
+
       /* Run a busy loop while NSS is set.  */
       while (gpio_get(GPIOA, GPIO4));
+
       /* Set up transfer when we're selected as slave.  */
       spi_dma_transceive (tx_buffer[1 - whichone], 4, tx_buffer[whichone], 4);
-      /* Do not start a new transfer until NSS goes high.  */
-      while (gpio_get(GPIOA, GPIO4) == 0);
-      /* Assume it is safe to disable SPI now that NSS is UP.  */
-      spi_disable (SPI1);
+
       /* Clear status markers of Rx correctness.  */
       gpio_clear (GPIOD, GPIO12 | GPIO13);
+
+      /* Do not proceed further until NSS goes high and
+        transceive status is ALL TRANSFERS COMPLETE.  */
+      while (gpio_get(GPIOA, GPIO4) == 0 || transceive_status > 0);
+
+      /* Assume it is safe to disable SPI now that NSS is UP.
+         Empty the Rx buffer of any leftovers it might contain,
+         then disable the SPI.  */
+      /* FIXME: With GCC 4.9.2 no transceive at all if the
+	 SPI_DR(...) value is not assigned to a variable.  */
+      if (SPI_SR(SPI1) & SPI_SR_RXNE)
+	dummy = SPI_DR (SPI1);
+      spi_disable (SPI1);
+
       /* Swap buffers.  */
       whichone = 1 - whichone;
     }
