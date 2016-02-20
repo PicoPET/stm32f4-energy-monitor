@@ -937,6 +937,9 @@ void dma2_stream2_isr(void)
 /* SPI transmit completed with DMA */
 void dma2_stream3_isr(void)
 {
+        /* Wait for transfer finished. */
+        while (!(SPI_SR(SPI1) & SPI_SR_TXE));
+
 	//gpio_set(GPIOB,GPIO1);
 	if ((DMA2_LISR & DMA_LISR_TCIF3) != 0) {
 		DMA2_LIFCR |= DMA_LIFCR_CTCIF3;
@@ -1153,12 +1156,12 @@ int main(void)
       /* Set up transfer when we're selected as slave.  */
       spi_dma_transceive (tx_buffer[1 - whichone], 4, tx_buffer[whichone], 4);
 
-      /* Clear status markers of Rx correctness.  */
-      gpio_clear (GPIOD, GPIO12 | GPIO13);
-
       /* Do not proceed further until NSS goes high and
         transceive status is ALL TRANSFERS COMPLETE.  */
       while (gpio_get(GPIOA, GPIO4) == 0 || transceive_status > 0);
+
+      /* Clear status markers of Rx correctness.  */
+      gpio_clear (GPIOD, GPIO12 | GPIO13);
 
       /* Assume it is safe to disable SPI now that NSS is UP.
          Empty the Rx buffer of any leftovers it might contain,
