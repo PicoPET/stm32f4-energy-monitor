@@ -1152,6 +1152,7 @@ int main(void)
 
       /* Run a busy loop while NSS is set.  */
       while (gpio_get(GPIOA, GPIO4));
+      //spi_enable (SPI1);
 
       /* Set up transfer when we're selected as slave.  */
       spi_dma_transceive (tx_buffer[1 - whichone], 4, tx_buffer[whichone], 4);
@@ -1170,7 +1171,10 @@ int main(void)
 	 SPI_DR(...) value is not assigned to a variable.  */
       if (SPI_SR(SPI1) & SPI_SR_RXNE)
 	dummy = SPI_DR (SPI1);
-      spi_disable (SPI1);
+
+      //spi_disable (SPI1);
+      // spi_reset (SPI1);
+      // spi_setup ();
 
       /* Swap buffers.  */
       whichone = 1 - whichone;
