@@ -528,25 +528,26 @@ void timer5_setup (void)
 #define USE_8BIT_TRANSFERS
 
 /* Set up the SPI.  Pin assignment: use plain alternate function 5:
-    - SPI1_NSS: PA4
-    - SPI1_SCK: PA5
-    - SPI1_MISO: PA6
-    - SPI1_MOSI: PA7.  */
+    - SPI1_NSS: PA15
+    - SPI1_SCK: PB3
+    - SPI1_MISO: PB4
+    - SPI1_MOSI: PB5.  */
 void spi_setup ()
 {
     //gpio_toggle(GPIOD, GPIO15);
-    /* Set up GPIOA ports 4, 5, 6 and 7:
+    /* Set up GPIOA port 15, GPIOB ports 3, 4 and 5:
         - speed 50 MHz
 	- pullup-pulldown (as opposed to open-drain)
 	- no pull-up/pull-down direction
 	- alternate function #5 (SPI1/SPI2/I2S2/I2S2ext)
 	*/
-    gpio_set_af (GPIOA, GPIO_AF5, GPIO4 | GPIO5 | GPIO6 | GPIO7);
+    gpio_set_af (GPIOA, GPIO_AF5, GPIO15);
+    gpio_set_af (GPIOB, GPIO_AF5, GPIO3 | GPIO4 | GPIO5);
     /* A call to 'gpio_mode_setup' is mandatory to see the inputs.  */
-    gpio_mode_setup (GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO4 | GPIO5 | GPIO7);
-    gpio_mode_setup (GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO6);
+    gpio_mode_setup (GPIOB, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO3 | GPIO4 | GPIO5);
+    gpio_mode_setup (GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO15);
     /* Do not set output options on pins PA4, PA5, PA7 - they're all inputs.  */
-    gpio_set_output_options (GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, GPIO6);
+    gpio_set_output_options (GPIOB, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, GPIO4);
 
     /* Enable SPI1 clock.  */
     rcc_peripheral_enable_clock (&RCC_APB2ENR,
@@ -567,8 +568,8 @@ void spi_setup ()
 
     /* Init slave on SPI1:
         - full_duplex mode
-	- assume clock low when idle (polarity 0, transition #0 is rising edge)
-	- make data stable on falling edge of clock (transition #1)
+	- assume clock low when idle (polarity 1, transition #1 is rising edge)
+	- make data stable on falling edge of clock (transition #0)
 	- send 8-bit frames
 	- send data in MSBit-first order.
 	*/
@@ -977,8 +978,10 @@ void dma2_stream2_isr(void)
 /* SPI transmit completed with DMA */
 void dma2_stream3_isr(void)
 {
+#if 0
         /* Wait for transfer finished. */
         while (!(SPI_SR(SPI1) & SPI_SR_TXE));
+#endif
 
 	//gpio_set(GPIOB,GPIO1);
 	/* Acknowledge the interrupt.  */
@@ -993,6 +996,9 @@ void dma2_stream3_isr(void)
 	/* Disable stream, wait until disable is effective.  */
 	dma_disable_stream (DMA2, DMA_STREAM3);
 	while ((DMA_SCR (DMA2, DMA_STREAM3) & DMA_SxCR_EN) != 0);
+
+	/* Place a 0 in the Tx buffer.  */
+	SPI_DR (SPI1) = 0x0;
 
 	/* Clear the Transfer Complete interrupt flag again after disable.  */
 	if ((DMA2_LISR & DMA_LISR_TCIF3) != 0) {
@@ -1207,14 +1213,14 @@ int main(void)
       volatile uint32_t dummy;
 
       /* Run a busy loop while NSS is set.  */
-      while (gpio_get(GPIOA, GPIO4));
+      while (gpio_get(GPIOA, GPIO15));
 
       /* Set up transfer when we're selected as slave.  */
       spi_dma_transceive (tx_buffer[1 - whichone], 4, tx_buffer[whichone], 4);
 
       /* Do not proceed further until NSS goes high and
         transceive status is ALL TRANSFERS COMPLETE.  */
-      while (gpio_get(GPIOA, GPIO4) == 0 || transceive_status > 0);
+      while (gpio_get(GPIOA, GPIO15) == 0 || transceive_status > 0);
 
       /* Clear status markers of Rx correctness.  */
       gpio_clear (GPIOD, GPIO12 | GPIO13);
