@@ -862,6 +862,24 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 		dma_enable_stream (DMA2, DMA_STREAM2);
 	}
 	if (tx_len > 0) {
+		if (!(tx_addr[0] == 0x01
+		      && tx_addr[1] == 0x10
+		      && tx_addr[2] == 0xff
+		      && tx_addr[3] == 0x00)
+		    && !(tx_addr[0] == 0xde
+			 && tx_addr[1] == 0xad
+			 && tx_addr[2] == 0xbe
+			 && tx_addr[3] == 0xef))
+			error_condition ();
+
+		if (tx_len != 4)
+			error_condition ();
+
+		/* Clear the Tx Transfer Complete interrupt flag.  */
+		if ((DMA2_LISR & DMA_LISR_TCIF3) != 0) {
+			DMA2_LIFCR |= DMA_LIFCR_CTCIF3;
+		}
+
 		dma_enable_transfer_complete_interrupt(DMA2, DMA_STREAM3);
 		dma_enable_stream (DMA2, DMA_STREAM3);
 	}
@@ -918,17 +936,17 @@ void dma2_stream2_isr(void)
 	      {
 		/* Turn green/amber LED according to whether the received data
 		   are correct or not.  */
-		if (dummy_rx_buf[0] == 0x1
-		    && dummy_rx_buf[1] == 0x2
-		    && dummy_rx_buf[2] == 0x3
-		    && dummy_rx_buf[3] == 0x4)
+		if (tx_buffer[whichone][0] == 0xde
+		    && tx_buffer[whichone][1] == 0xad
+		    && tx_buffer[whichone][2] == 0xbe
+		    && tx_buffer[whichone][3] == 0xef)
 		  gpio_set(GPIOD, GPIO12); /* green */
 		else
 		  gpio_set(GPIOD, GPIO13); /* amber */
 	      }
 
 	    /* Enable the ADC IRQ only after the DMA setup is done.  */
-	    nvic_enable_irq (NVIC_ADC_IRQ);
+	    /* nvic_enable_irq (NVIC_ADC_IRQ); */
 	  }
 
 	/* gpio_clear(GPIOA,GPIO4);  */
@@ -941,6 +959,7 @@ void dma2_stream3_isr(void)
         while (!(SPI_SR(SPI1) & SPI_SR_TXE));
 
 	//gpio_set(GPIOB,GPIO1);
+	/* Acknowledge the interrupt.  */
 	if ((DMA2_LISR & DMA_LISR_TCIF3) != 0) {
 		DMA2_LIFCR |= DMA_LIFCR_CTCIF3;
 	}
@@ -949,7 +968,13 @@ void dma2_stream3_isr(void)
 
 	spi_disable_tx_dma (SPI1);
 
+	/* Disable stream, wait until disable is effective.  */
 	dma_disable_stream (DMA2, DMA_STREAM3);
+	while ((DMA_SCR (DMA2, DMA_STREAM3) & DMA_SxCR_EN) != 0);
+
+	/* Check number of elements remaining.  Fail if not zero.  */
+	if (DMA_SNDTR (DMA2, DMA_STREAM3) != 0)
+		error_condition ();
 
 	//spi_set_nss_high (SPI1);
 
@@ -1078,11 +1103,9 @@ void error_condition()
     while(1);
 }
 
-
 int main(void)
 {
     int c_started=0, n, cpy, i, offset=0;
-    int whichone = 0;
     short s;
 
     rcc_clock_setup_hse_3v3(&hse_8mhz_3v3[CLOCK_3V3_168MHZ]);
@@ -1146,13 +1169,15 @@ int main(void)
     usbd_register_set_config_callback(usbd_dev, usbdev_set_config);
 #endif
 
+    /* DO NOT allow ADC to interfere... */
+    nvic_disable_irq (NVIC_ADC_IRQ);
+
     while (1)
     {
       volatile uint32_t dummy;
 
       /* Run a busy loop while NSS is set.  */
       while (gpio_get(GPIOA, GPIO4));
-      //spi_enable (SPI1);
 
       /* Set up transfer when we're selected as slave.  */
       spi_dma_transceive (tx_buffer[1 - whichone], 4, tx_buffer[whichone], 4);
@@ -1171,10 +1196,6 @@ int main(void)
 	 SPI_DR(...) value is not assigned to a variable.  */
       if (SPI_SR(SPI1) & SPI_SR_RXNE)
 	dummy = SPI_DR (SPI1);
-
-      //spi_disable (SPI1);
-      // spi_reset (SPI1);
-      // spi_setup ();
 
       /* Swap buffers.  */
       whichone = 1 - whichone;
