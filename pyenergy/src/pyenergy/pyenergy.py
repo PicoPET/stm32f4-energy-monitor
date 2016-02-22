@@ -285,7 +285,7 @@ class EnergyMonitor(object):
         self.measurement_params[4] = {'resistor':0.5, 'gain':50, 'vref':3}
 
         # Equal to tperiod in the firmware
-        self.samplePeriod = 500
+        self.samplePeriod = 1050
 
         self.adcMpoint = [None, None, None]
 
