@@ -748,11 +748,11 @@ uint16_t tx_buffer[2][4] = {
 
 uint16_t dummy_rx_buf[4];
 #else
-uint8_t tx_buffer[2][4] = {
-  { 0xff, 0xff, 0xff, 0xff },
-  { 0x01, 0x10, 0xff, 0x00 }};
+uint8_t tx_buffer[2][16] __attribute__ ((aligned (16))) = {
+	{ 0xff, 0xff, 0xff, 0xff, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0xb1, 0x9b, 0xb0, 0x0b },
+	{ 0x01, 0x10, 0xff, 0x00, 0x89, 0xab, 0xcd, 0xef, 0xb1, 0xab, 0x1a, 0xa5, 0x5a, 0xb0, 0x0b, 0xff }};
 
-uint8_t dummy_rx_buf[4];
+uint8_t dummy_rx_buf[16] __attribute__ ((aligned (16)));
 #endif
 
 #ifdef USE_16BIT_TRANSFERS
@@ -890,9 +890,6 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 			 && tx_addr[1] == 0xad
 			 && tx_addr[2] == 0xbe
 			 && tx_addr[3] == 0xef))
-			error_condition ();
-
-		if (tx_len != 4)
 			error_condition ();
 
 		/* Clear the Tx Transfer Complete interrupt flag.  */
@@ -1216,7 +1213,7 @@ int main(void)
       while (gpio_get(GPIOA, GPIO15));
 
       /* Set up transfer when we're selected as slave.  */
-      spi_dma_transceive (tx_buffer[1 - whichone], 4, tx_buffer[whichone], 4);
+      spi_dma_transceive (tx_buffer[1 - whichone], 16, tx_buffer[whichone], 16);
 
       /* Do not proceed further until NSS goes high and
         transceive status is ALL TRANSFERS COMPLETE.  */
