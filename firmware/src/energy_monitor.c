@@ -544,7 +544,7 @@ void spi_setup ()
     gpio_set_af (GPIOA, GPIO_AF5, GPIO4 | GPIO5 | GPIO6 | GPIO7);
     /* A call to 'gpio_mode_setup' is mandatory to see the inputs.  */
     gpio_mode_setup (GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO4 | GPIO5 | GPIO7);
-    gpio_mode_setup (GPIOA, GPIO_MODE_AF, GPIO_PUPD_PULLDOWN, GPIO6);
+    gpio_mode_setup (GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO6);
     /* Do not set output options on pins PA4, PA5, PA7 - they're all inputs.  */
     gpio_set_output_options (GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, GPIO6);
 
@@ -632,7 +632,9 @@ void dma_setup(void)
     /* 10.3.17(2): Set the peripheral port register address.  */
     dma_set_peripheral_address(DMA2, DMA_STREAM2, (uint32_t)&SPI1_DR);
 
+    /* 10.3.17(5): Select the DMA channel (request).  */
     dma_channel_select (DMA2, DMA_STREAM2, DMA_SxCR_CHSEL_3);
+
     /* 10.3.17(6): If the peripheral is intended to be the flow controller... */
     /* 10.3.17(7): Configure the stream priority.  */
     dma_set_priority(DMA2, DMA_STREAM2, DMA_SxCR_PL_VERY_HIGH);
@@ -652,16 +654,22 @@ void dma_setup(void)
     dma_set_memory_size(DMA2, DMA_STREAM2, DMA_SxCR_MSIZE_8BIT);
 #endif
     dma_enable_memory_increment_mode(DMA2, DMA_STREAM2);
+    dma_disable_peripheral_increment_mode (DMA2, DMA_STREAM2);
 
     /* Tx DMA configuration.  */
     /* 10.3.17(2): Set the peripheral port register address.  */
     dma_set_peripheral_address(DMA2, DMA_STREAM3, (uint32_t)&SPI1_DR);
+
+    /* 10.3.17(5): Select the DMA channel (request).  */
     dma_channel_select (DMA2, DMA_STREAM3, DMA_SxCR_CHSEL_3);
+
     /* 10.3.17(6): If the peripheral is intended to be the flow controller... */
     /* 10.3.17(7): Configure the stream priority.  */
     dma_set_priority(DMA2, DMA_STREAM3, DMA_SxCR_PL_HIGH);
+
     /* 10.3.17(8): Configure the FIFO usage.  */
     /* 10.3.17(9): Configure the data transfer direction...  */
+
     dma_set_transfer_mode (DMA2, DMA_STREAM3, DMA_SxCR_DIR_MEM_TO_PERIPHERAL);
     /* 10.3.17(9): ...peripheral and memory incremented/fixed mode,
 		  single or burst transactions, peripheral
@@ -676,6 +684,7 @@ void dma_setup(void)
     dma_set_memory_size(DMA2, DMA_STREAM3, DMA_SxCR_MSIZE_8BIT);
 #endif
     dma_enable_memory_increment_mode(DMA2, DMA_STREAM3);
+     dma_disable_peripheral_increment_mode (DMA2, DMA_STREAM3);
 
     /* Enable DMA interrupts in general, but disable DMA2 xfer complete ones.  */
     dma_disable_transfer_complete_interrupt(DMA2, DMA_STREAM2);
@@ -835,25 +844,35 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 	/* Set up rx dma */
 	if (rx_len > 0) {
 		/* RM0090 10.3.17(1): If the stream is enabled, disable it.
-		   Disable streams prior to stream programming.  */
+		   Disable streams prior to stream programming.
+		   Wait for stream to be effectively disabled.  */
 		dma_disable_stream (DMA2, DMA_STREAM2);
+		while ((DMA_SCR(DMA2, DMA_STREAM2) & DMA_SxCR_EN) != 0) ;
+
 		/* 10.3.17(3): Set the memory address.  */
 		dma_set_memory_address(DMA2, DMA_STREAM2, (uint32_t)rx_buf);
 		/* 10.3.17(4): Configure the total number of data items to be transferred.  */
 		dma_set_number_of_data(DMA2, DMA_STREAM2, rx_len);
-		/* 10.3.17(5): Select the DMA channel (request).  */
 	}
 
 	/* Set up tx dma */
 	if (tx_len > 0) {
+		static volatile uint32_t fifo_status = 0;
+
 		/* RM0090 10.3.17(1): If the stream is enabled, disable it.
 		   Disable streams prior to stream programming.  */
 		dma_disable_stream (DMA2, DMA_STREAM3);
+		while ((DMA_SCR(DMA2, DMA_STREAM3) & DMA_SxCR_EN) != 0) ;
+
+		fifo_status = DMA_SFCR (DMA2, DMA_STREAM3);
+
 		/* 10.3.17(3): Set the memory address.  */
 		dma_set_memory_address(DMA2, DMA_STREAM3, (uint32_t)tx_buf);
 		/* 10.3.17(4): Configure the total number of data items to be transferred.  */
 		dma_set_number_of_data(DMA2, DMA_STREAM3, tx_len);
-		/* 10.3.17(5): Select the DMA channel (request).  */
+
+		/* Clear the status of the Tx path.  */
+
 	}
 
 	/* Enable dma transfer complete interrupts.  10.3.17(10): Activate the stream(s). */
@@ -923,9 +942,6 @@ void dma2_stream2_isr(void)
 	/* Decrement the status to indicate one of the transfers is complete */
 	transceive_status--;
 
-	/* Mark end of reception.  */
-        gpio_clear (GPIOD, GPIO14);
-
 	/* If no transfers are under way, re-enable the ADC interrupts.  */
 	if (transceive_status == 0)
 	  {
@@ -934,6 +950,9 @@ void dma2_stream2_isr(void)
 		spi_dma_transceive (0, 0, 0, 0);
 	    else
 	      {
+		/* Wait until the FIFOs are flushed.  */
+		while (SPI_SR(SPI1) & SPI_SR_BSY);
+
 		/* Turn green/amber LED according to whether the received data
 		   are correct or not.  */
 		if (tx_buffer[whichone][0] == 0xde
@@ -948,6 +967,9 @@ void dma2_stream2_isr(void)
 	    /* Enable the ADC IRQ only after the DMA setup is done.  */
 	    /* nvic_enable_irq (NVIC_ADC_IRQ); */
 	  }
+
+	/* Mark end of reception.  */
+        gpio_clear (GPIOD, GPIO14);
 
 	/* gpio_clear(GPIOA,GPIO4);  */
 }
@@ -972,6 +994,11 @@ void dma2_stream3_isr(void)
 	dma_disable_stream (DMA2, DMA_STREAM3);
 	while ((DMA_SCR (DMA2, DMA_STREAM3) & DMA_SxCR_EN) != 0);
 
+	/* Clear the Transfer Complete interrupt flag again after disable.  */
+	if ((DMA2_LISR & DMA_LISR_TCIF3) != 0) {
+		DMA2_LIFCR |= DMA_LIFCR_CTCIF3;
+	}
+
 	/* Check number of elements remaining.  Fail if not zero.  */
 	if (DMA_SNDTR (DMA2, DMA_STREAM3) != 0)
 		error_condition ();
@@ -981,19 +1008,22 @@ void dma2_stream3_isr(void)
 	/* Decrement the status to indicate one of the transfers is complete */
 	transceive_status--;
 
-	/* Mark end of transmission.  */
-	gpio_clear (GPIOD, GPIO15);
-
 	/* If no transfers are under way, re-enable the ADC interrupts.  */
 	if (transceive_status == 0)
 	  {
+	    /* Wait until the FIFOs are flushed.  */
+	    while (SPI_SR(SPI1) & SPI_SR_BSY);
+
 	    /* Check for backlog.  If present, trigger the next transfer.  */
 	    if (backlog_used > 0)
 		spi_dma_transceive (0, 0, 0, 0);
 
 	    /* Enable the ADC IRQ only after the DMA setup is done.  */
-	    nvic_enable_irq (NVIC_ADC_IRQ);
+	    /* nvic_enable_irq (NVIC_ADC_IRQ); */
 	  }
+
+	/* Mark end of transmission.  */
+	gpio_clear (GPIOD, GPIO15);
 
 	//gpio_clear(GPIOB,GPIO1);
 }
