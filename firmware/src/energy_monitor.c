@@ -746,13 +746,13 @@ uint16_t tx_buffer[2][4] = {
   { 0xa5a5, 0x5a5a, 0xffff, 0x0000 },
   { 0x1234, 0x5678, 0x9abc, 0xdef0 }};
 
-uint16_t dummy_rx_buf[4];
+uint16_t rx_buffer[4];
 #else
-uint8_t tx_buffer[2][16] __attribute__ ((aligned (16))) = {
+uint8_t tx_buffer[2][256] __attribute__ ((aligned (256))) = {
 	{ 0xff, 0xff, 0xff, 0xff, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0xb1, 0x9b, 0xb0, 0x0b },
 	{ 0x01, 0x10, 0xff, 0x00, 0x89, 0xab, 0xcd, 0xef, 0xb1, 0xab, 0x1a, 0xa5, 0x5a, 0xb0, 0x0b, 0xff }};
 
-uint8_t dummy_rx_buf[16] __attribute__ ((aligned (16)));
+uint8_t rx_buffer[256] __attribute__ ((aligned (256)));
 #endif
 
 #ifdef USE_16BIT_TRANSFERS
@@ -886,10 +886,10 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 		      && tx_addr[1] == 0x10
 		      && tx_addr[2] == 0xff
 		      && tx_addr[3] == 0x00)
-		    && !(tx_addr[0] == 0xde
-			 && tx_addr[1] == 0xad
-			 && tx_addr[2] == 0xbe
-			 && tx_addr[3] == 0xef))
+		    && !(rx_addr[0] == 0xde
+			 && rx_addr[1] == 0xad
+			 && rx_addr[2] == 0xbe
+			 && rx_addr[3] == 0xef))
 			error_condition ();
 
 		/* Clear the Tx Transfer Complete interrupt flag.  */
@@ -954,10 +954,10 @@ void dma2_stream2_isr(void)
 
 		/* Turn green/amber LED according to whether the received data
 		   are correct or not.  */
-		if (tx_buffer[whichone][0] == 0xde
-		    && tx_buffer[whichone][1] == 0xad
-		    && tx_buffer[whichone][2] == 0xbe
-		    && tx_buffer[whichone][3] == 0xef)
+		if (rx_buffer[0] == 0xde
+		    && rx_buffer[1] == 0xad
+		    && rx_buffer[2] == 0xbe
+		    && rx_buffer[3] == 0xef)
 		  gpio_set(GPIOD, GPIO12); /* green */
 		else
 		  gpio_set(GPIOD, GPIO13); /* amber */
@@ -1216,7 +1216,7 @@ int main(void)
 
       gpio_set (GPIOB, GPIO7);
       /* Set up transfer when we're selected as slave.  */
-      spi_dma_transceive (tx_buffer[1 - whichone], 16, tx_buffer[whichone], 16);
+      spi_dma_transceive (tx_buffer[1 - whichone], 16, rx_buffer, 16);
       gpio_clear (GPIOB, GPIO7);
 
       /* Do not proceed further until NSS goes high and
