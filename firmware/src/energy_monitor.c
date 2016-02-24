@@ -926,7 +926,8 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 /* SPI receive completed with DMA */
 void dma2_stream2_isr(void)
 {
-	// gpio_set(GPIOA,GPIO4);
+	gpio_set(GPIOB,GPIO6);
+
 	if ((DMA2_LISR & DMA_LISR_TCIF2) != 0) {
 		DMA2_LIFCR |= DMA_LIFCR_CTCIF2;
 	}
@@ -969,12 +970,13 @@ void dma2_stream2_isr(void)
 	/* Mark end of reception.  */
         gpio_clear (GPIOD, GPIO14);
 
-	/* gpio_clear(GPIOA,GPIO4);  */
+	gpio_clear(GPIOB,GPIO6);
 }
 
 /* SPI transmit completed with DMA */
 void dma2_stream3_isr(void)
 {
+	gpio_set (GPIOB, GPIO6);
 #if 0
         /* Wait for transfer finished. */
         while (!(SPI_SR(SPI1) & SPI_SR_TXE));
@@ -1028,7 +1030,7 @@ void dma2_stream3_isr(void)
 	/* Mark end of transmission.  */
 	gpio_clear (GPIOD, GPIO15);
 
-	//gpio_clear(GPIOB,GPIO1);
+	gpio_clear(GPIOB,GPIO6);
 }
 
 void adc_setup()
@@ -1165,8 +1167,8 @@ int main(void)
 
     gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO9 | GPIO11 | GPIO12);
     gpio_mode_setup(GPIOD, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO15 | GPIO14 | GPIO13 | GPIO12);
-    gpio_mode_setup(GPIOB, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO11 | GPIO13 | GPIO15);
-    gpio_clear (GPIOB, GPIO11 | GPIO13 | GPIO15);
+    gpio_mode_setup(GPIOB, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO6 | GPIO7 | GPIO11 | GPIO13 | GPIO15);
+    gpio_clear (GPIOB, GPIO6 | GPIO7 | GPIO11 | GPIO13 | GPIO15);
     gpio_set_af(GPIOA, GPIO_AF10, GPIO9 | GPIO11 | GPIO12);
 
     for(i = 0;i < 4; ++i)
@@ -1212,8 +1214,10 @@ int main(void)
       /* Run a busy loop while NSS is set.  */
       while (gpio_get(GPIOA, GPIO15));
 
+      gpio_set (GPIOB, GPIO7);
       /* Set up transfer when we're selected as slave.  */
       spi_dma_transceive (tx_buffer[1 - whichone], 16, tx_buffer[whichone], 16);
+      gpio_clear (GPIOB, GPIO7);
 
       /* Do not proceed further until NSS goes high and
         transceive status is ALL TRANSFERS COMPLETE.  */
@@ -1227,11 +1231,13 @@ int main(void)
          then disable the SPI.  */
       /* FIXME: With GCC 4.9.2 no transceive at all if the
 	 SPI_DR(...) value is not assigned to a variable.  */
+      gpio_set (GPIOB, GPIO7);
       if (SPI_SR(SPI1) & SPI_SR_RXNE)
 	dummy = SPI_DR (SPI1);
 
       /* Swap buffers.  */
       whichone = 1 - whichone;
+      gpio_clear (GPIOB, GPIO7);
     }
 }
 
