@@ -119,17 +119,17 @@ typedef struct {
     uint64_t current_time;
 } instant_data;
 
-/* Sample at 25kS/s (2 periods/sample), 1 out of 3 channels active for now.
+/* Sample at 10kS/s (2 periods/sample), 1 out of 3 channels active for now.
 
-   One buffer will be sent every 20 microseconds (3.5 microseconds
+   One buffer will be sent every 100 microseconds (3.5 microseconds
    xfer time for 128 bits, 4 microseconds for 144 bits).
 
    The divide-by-4 is necessary to adjust for the 1/2-sysclk APB1 clock,
    furter divided by 2 due to prescaler divisor being equal to 1.  The resulting
-   period (in cycles of 84 MHz APB1 clock) results in a frequency of 40 kHz
+   period (in cycles of 84 MHz APB1 clock) results in a frequency of 20 kHz
    for I or V component in alternation, leading to a complete measurement being
-   available every 2100 APB1 cycles, or 50 microseconds.   */
-int tperiod = 168000000/4/40000;
+   available every 8400 APB1 cycles, or 100 microseconds.   */
+int tperiod = 168000000/4/20000;
 
 typedef struct {
     accumulated_data accum_data;
@@ -160,6 +160,8 @@ int adc_to_mpoint[3] = {-1, -1, -1};
 
 /* Variable to hold the last reading of TIM5.  */
 volatile unsigned int tim5_value = 0;
+unsigned int previous_tim5_value = 0xffffffff;
+
 
 // USB communication globals ////////////////////////////////////////
 usbd_device *usbd_dev;
@@ -215,6 +217,11 @@ void exti_setup(int m_point)
             case 1<<15: nvic_enable_irq(NVIC_EXTI15_10_IRQ); break;
         }
     }
+    /* Enable IRQ for pins 10..15 of port A at all times.  */
+    exti_select_source (GPIOA, GPIO15);
+    exti_set_trigger (GPIO15, EXTI_TRIGGER_BOTH);
+    exti_enable_request (GPIO15);
+    nvic_enable_irq(NVIC_EXTI15_10_IRQ);
 }
 
 /* Forward declaration of buffer cleanup function.  */
@@ -226,7 +233,7 @@ void start_measurement(int m_point)
     systick_interrupt_disable ();
 
     /* Raise GPIO D14 to indicate start of measurement.  */
-    gpio_set (GPIOD, GPIO14);
+    // gpio_set (GPIOD, GPIO14);
 
     /* Enable SPI1 peripheral.  */
     spi_enable(SPI1);
@@ -1197,47 +1204,12 @@ int main(void)
     timer5_setup ();
     exti_timer_setup();
 
-    gpio_toggle(GPIOA, GPIO12);
-
-#if 1
     usbd_dev = usbd_init(&otgfs_usb_driver, &dev, &config, usb_strings, 3, control_buffer, 128);
     usbd_register_set_config_callback(usbd_dev, usbdev_set_config);
-#endif
-
-    /* DO NOT allow ADC to interfere... */
-    nvic_disable_irq (NVIC_ADC_IRQ);
 
     while (1)
     {
-      volatile uint32_t dummy;
-
-      /* Run a busy loop while NSS is set.  */
-      while (gpio_get(GPIOA, GPIO15));
-
-      gpio_set (GPIOB, GPIO7);
-      /* Set up transfer when we're selected as slave.  */
-      spi_dma_transceive (tx_buffer[1 - whichone], 16, rx_buffer, 16);
-      gpio_clear (GPIOB, GPIO7);
-
-      /* Do not proceed further until NSS goes high and
-        transceive status is ALL TRANSFERS COMPLETE.  */
-      while (gpio_get(GPIOA, GPIO15) == 0 || transceive_status > 0);
-
-      /* Clear status markers of Rx correctness.  */
-      gpio_clear (GPIOD, GPIO12 | GPIO13);
-
-      /* Assume it is safe to disable SPI now that NSS is UP.
-         Empty the Rx buffer of any leftovers it might contain,
-         then disable the SPI.  */
-      /* FIXME: With GCC 4.9.2 no transceive at all if the
-	 SPI_DR(...) value is not assigned to a variable.  */
-      gpio_set (GPIOB, GPIO7);
-      if (SPI_SR(SPI1) & SPI_SR_RXNE)
-	dummy = SPI_DR (SPI1);
-
-      /* Swap buffers.  */
-      whichone = 1 - whichone;
-      gpio_clear (GPIOB, GPIO7);
+      usbd_poll(usbd_dev);
     }
 }
 
@@ -1283,6 +1255,48 @@ void exti_isr()
         // timer_enable_counter(TIM3);
         // timer_set_counter(TIM3, 0);
     }
+
+    /* Handle GPIO(A)15 in a different way: it's NSS for SPI1.  */
+    if (exti_get_flag_status (GPIO15))
+      {
+	/* ACK the interrupt (clear flag bit).  */
+	exti_reset_request(GPIO15);
+
+	/* If the NSS edge was falling, initiate the tranfer.  */
+	if (gpio_get (GPIOA, GPIO15) == 0)
+	  {
+	    /* Mark start of non-wait code.  */
+	    gpio_set (GPIOB, GPIO7);
+
+	    /* Set up transfer when we're selected as slave.  */
+	    spi_dma_transceive (tx_buffer[1 - whichone], 16, rx_buffer, 16);
+
+	    /* Mark the end of the non-wait code.  */
+	    gpio_clear (GPIOB, GPIO7);
+	  }
+	else
+	  /* NSS rising edge: clean up.  */
+	  {
+	    volatile uint32_t dummy;
+
+	    /* Mark the start of the non-wait code.  */
+	    gpio_set (GPIOB, GPIO7);
+
+	    /* Clear status markers of Rx correctness.  */
+	    gpio_clear (GPIOD, GPIO12 | GPIO13);
+
+	    /* If transfer was not complete, enter error condition.  */
+	    if (transceive_status > 0)
+	      error_condition ();
+
+	    /* Empty the Rx data register of any garbage.  */
+	    if (SPI_SR(SPI1) & SPI_SR_RXNE)
+	      dummy = SPI_DR (SPI1);
+
+	    /* Mark the end of the non-wait code.  */
+	    gpio_clear (GPIOB, GPIO7);
+	  }
+      }
 }
 
 void tim3_isr()
@@ -1302,10 +1316,24 @@ void exit(int a)
 void buffer_cleanup (int channel)
 {
 #if 1
-    memset (&tx_buffer[0][3 + 2 * channel], 0, 2 * sizeof (short unsigned int));
-    memset (&tx_buffer[1][3 + 2 * channel], 0, 2 * sizeof (short unsigned int));
+  memset (tx_buffer[0], 0, 256);
+  memset (tx_buffer[1], 0, 256);
 #endif
 }
+
+/* TODO:
+   - if sample count (sample data size) is zero, save current
+     timestamp from TIM5.
+   - at every completed sample, add a 3-word record with 8-bit delta-T
+     for each channel (3 * (8b + 12b + 12b)) and increment sample count.
+   - when total data size is 244 bytes or more, reset sample count and
+     switch buffers.
+*/
+
+/* Data size: space occupied by initial TS followed by samples.
+   Will be reset when buffers are swapped.  */
+unsigned int sample_data_size = 0;
+unsigned int sample_count = 0;
 
 /* ADC interrupt service routine.  */
 void adc_isr()
@@ -1318,8 +1346,9 @@ void adc_isr()
     volatile unsigned int tim5_now;
     register unsigned short tim5_high, tim5_low;
     register unsigned short got_full_result;
+    unsigned char *next_sample;
 
-    /* Disable ADC IRQs until DMA+SPI transfer is done.  */
+#if 0
     nvic_disable_irq (NVIC_ADC_IRQ);
 
     /* Mark start of ISR.  */
@@ -1328,32 +1357,37 @@ void adc_isr()
     /* Get value of TIM5 counter.  */
     tim5_now = timer_get_counter (TIM5);
 
-    /* If a transfer is ongoing, raise an error condition.  */
-    if (gpio_get (GPIOD, GPIO15) != 0)
-      error_condition ();
-
     /* Assume no full result was collected.  */
     got_full_result = 0x4141;
 
     /* Store the TIM5 reading at the start of processing.  */
-    tim5_value = tim5_now;
-    tim5_low = (unsigned short) (tim5_now & 0xffff);
-    tim5_high = (unsigned short) ((tim5_now >> 16) & 0xffff);
-    tx_buffer[whichone][1] = (tim5_high >> 8) & 0xff;
-    tx_buffer[whichone][2] = (tim5_high >> 8) & 0xff;
+    /* Clear the low 5 bits of the TS to hold the sample count,
+       filled in once the frame is completely filled.  */
+    tim5_value = tim5_now & ~0x1f;
 
+    /* If this is the start of a frame, store the TS from TIM5 at
+       offset 0 in frame.   */
+    if (sample_data_size == 0)
+      {
+	previous_tim5_value = tim5_value;
+	*((unsigned int *) tx_buffer[whichone]) = tim5_value;
+	sample_data_size += sizeof (unsigned int);
+      }
+
+    next_sample = tx_buffer[whichone] + sample_data_size;
+#endif
     for(i = 0; i < 3; ++i)
-    {
+      {
         if(adc_get_overrun_flag(adcs[i]))
-            error_condition();
+	  error_condition();
 
         if(adc_eoc(adcs[i]))
-        {
+	  {
             unsigned short val;
 
             m_point = adc_to_mpoint[i];
             if(m_point == -1)
-                error_condition();
+	      error_condition();
 
             // Get measurement point & buffer
             mp = &m_points[m_point];
@@ -1364,21 +1398,21 @@ void adc_isr()
             // Save last value
             if(mp->idx&1)
             {
-                mp->lastI = val;
-                mp->avgI[mp->avg_ptr] = val;
-                mp->avg_ptr = (mp->avg_ptr + 1) & (INSTANT_AVG_NUM - 1);
+	      mp->lastI = val;
+	      mp->avgI[mp->avg_ptr] = val;
+	      mp->avg_ptr = (mp->avg_ptr + 1) & (INSTANT_AVG_NUM - 1);
             }
             else
-            {
+	      {
                 mp->lastV = val;
                 mp->avgV[mp->avg_ptr] = val;
-            }
+	      }
 
             // Once we have read both current and voltage
-            if((mp->idx & 1) == 1)
-            {
-                accumulated_data *a_data = &mp->accum_data;
-                unsigned short c = mp->lastI;
+            if ((mp->idx & 1) == 1)
+	      {
+		accumulated_data *a_data = &mp->accum_data;
+		unsigned short c = mp->lastI;
                 unsigned short v = mp->lastV;
                 unsigned p = c*v;
 		got_full_result = 0x4242;
@@ -1391,9 +1425,9 @@ void adc_isr()
 		// Store values in currently selected buffer.
 
                 if(a_data->elapsed_time > 0) // ignore first sample (lastP = 0)
-                {
+		  {
                     a_data->energy_accum += (p + mp->lastP) / 2; // Trapezoidal integration;
-                }
+		  }
 
                 mp->lastP = p;
 
@@ -1408,7 +1442,7 @@ void adc_isr()
                     a_data->peak_voltage = v;
                 if(c > a_data->peak_current)
                     a_data->peak_current = c;
-            }
+	      }
 
             mp->idx = 1-mp->idx;
 
@@ -1417,27 +1451,67 @@ void adc_isr()
             // suspect an odd timing bug, but only happens 1/10000000 times.
             unsigned char chan[1];
 
+	    /* Store the values in SPI frame.
+	       Format:
+	       - 8 bits delta T
+	       - 8 MSbits I
+	       - 8 bits combined: 4 LSbits I followed by 4 MSbits V
+	       - 8 LSbits V. */
+#if 0
+	    next_sample[0] = (unsigned char) (tim5_now - previous_tim5_value);
+	    next_sample[1] = (unsigned char) ((mp->lastI >> 4) & 0xff);
+	    next_sample[2] = (unsigned char) (((mp->lastI & 0xf) << 4) | ((mp->lastV >> 8)  & 0xf));
+	    next_sample[3] = (unsigned char) (mp->lastV & 0xff);
+#endif
             // Select odd or even channel
             chan[0] = mp->chans[(mp->idx&1)];
             adc_set_regular_sequence(adcs[i], 1, chan);
-
             adc_enable_eoc_interrupt(adcs[i]);
-        }
-    }
+	  }
+	else
+	  {
+	    /* No data: enter an empty record, all zeroes.  */
+#if 0
+	    next_sample[0] = 0;
+	    next_sample[1] = 0;
+	    next_sample[2] = 0;
+	    next_sample[3] = 0;
+#endif
+	  }
 
+#if 0
+	/* Advance to next sample.  */
+	next_sample += 4;
+	sample_data_size += 4;
+	sample_count++;
+#endif
+      }
+
+#if 0
     /* Mark end of handling.  */
     gpio_clear (GPIOB, GPIO13);
 
-#if 0
-    /* Send the currently filled buffer (size is 1/2 of the entire variable.)  */
-    spi_dma_transceive (tx_buffer[whichone], 4, &dummy_rx_buf, 4);
-#endif
+    /* Keep track of last timestamp.  */
+    previous_tim5_value = tim5_value;
 
-    /* Flip the buffer index.  */
-    whichone = 1 - whichone;
+    /* Flip the buffer index if buffer is at full capacity.  */
+    if (sample_data_size > 244)
+      {
+	if (sample_count > 31)
+	  error_condition ();
+
+	/* Store the sample count in the low 5 bits of TS.  */
+	tx_buffer[whichone][3] |= sample_count;
+	sample_data_size = 0;
+	sample_count = 0;
+        whichone = 1 - whichone;
+      }
 
     /* Mark end of ISR.  */
     gpio_clear (GPIOB, GPIO11);
+    /* Re-enable the IRQ.  */
+    nvic_enable_irq (NVIC_ADC_IRQ);
+#endif
 }
 
 int milliseconds = 0;
