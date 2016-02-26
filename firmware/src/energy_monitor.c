@@ -217,11 +217,6 @@ void exti_setup(int m_point)
             case 1<<15: nvic_enable_irq(NVIC_EXTI15_10_IRQ); break;
         }
     }
-    /* Enable IRQ for pins 10..15 of port A at all times.  */
-    exti_select_source (GPIOA, GPIO15);
-    exti_set_trigger (GPIO15, EXTI_TRIGGER_BOTH);
-    exti_enable_request (GPIO15);
-    nvic_enable_irq(NVIC_EXTI15_10_IRQ);
 }
 
 /* Forward declaration of buffer cleanup function.  */
@@ -231,6 +226,13 @@ void buffer_cleanup ();
 void start_measurement(int m_point)
 {
     systick_interrupt_disable ();
+
+    /* Enable IRQ for pins 10..15 of port A to handle SPI controls.
+       stop_measurement does not disable that IRQ.  */
+    exti_select_source (GPIO15, GPIOA);
+    exti_set_trigger (GPIO15, EXTI_TRIGGER_BOTH);
+    exti_enable_request (GPIO15);
+    nvic_enable_irq(NVIC_EXTI15_10_IRQ);
 
     /* Raise GPIO D14 to indicate start of measurement.  */
     // gpio_set (GPIOD, GPIO14);
@@ -469,7 +471,8 @@ static void usb_reset_cb()
     {
         m_points[i].running = 0;
         m_points[i].trigger_port = -1;
-        m_points[i].trigger_pin = -1;
+	/* TRIGGER_PIN is a GPIO* mask.  Default value must be all-bits-clear.  */
+        m_points[i].trigger_pin = 0;
         m_points[i].assigned_adc = -1;
     }
 }
@@ -889,6 +892,7 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 		dma_enable_stream (DMA2, DMA_STREAM2);
 	}
 	if (tx_len > 0) {
+#if 0
 		if (!(tx_addr[0] == 0x01
 		      && tx_addr[1] == 0x10
 		      && tx_addr[2] == 0xff
@@ -898,7 +902,7 @@ static int spi_dma_transceive(const uint8_t *tx_addr, int tx_count, uint8_t *rx_
 			 && rx_addr[2] == 0xbe
 			 && rx_addr[3] == 0xef))
 			error_condition ();
-
+#endif
 		/* Clear the Tx Transfer Complete interrupt flag.  */
 		if ((DMA2_LISR & DMA_LISR_TCIF3) != 0) {
 			DMA2_LIFCR |= DMA_LIFCR_CTCIF3;
@@ -1173,16 +1177,18 @@ int main(void)
     systick_interrupt_enable();
 
     gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO9 | GPIO11 | GPIO12);
-    gpio_mode_setup(GPIOD, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO15 | GPIO14 | GPIO13 | GPIO12);
+    gpio_mode_setup(GPIOD, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO15 | GPIO14 | GPIO13 | GPIO12 | GPIO0 | GPIO1 | GPIO2);
     gpio_mode_setup(GPIOB, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO6 | GPIO7 | GPIO11 | GPIO13 | GPIO15);
     gpio_clear (GPIOB, GPIO6 | GPIO7 | GPIO11 | GPIO13 | GPIO15);
+    gpio_clear (GPIOD, GPIO0 | GPIO1 | GPIO2);
     gpio_set_af(GPIOA, GPIO_AF10, GPIO9 | GPIO11 | GPIO12);
 
     for(i = 0;i < 4; ++i)
     {
         m_points[i].assigned_adc = -1;
         m_points[i].trigger_port = -1;
-        m_points[i].trigger_pin = -1;
+	/* TRIGGER_PIN is a GPIO* mask.  Default value must be all-bits-clear.  */
+        m_points[i].trigger_pin = 0;
     }
 
     m_points[0].chans[0] = 2;
@@ -1228,6 +1234,8 @@ void exti_isr()
 {
     int i;
 
+    gpio_set (GPIOD, GPIO2);
+
     for(i = 0; i < 4; ++i)
         exti_reset_request(m_points[i].trigger_pin);
 
@@ -1235,7 +1243,8 @@ void exti_isr()
     {
         for(i = 0; i < 4; ++i)
         {
-            if(m_points[i].trigger_port == -1 || m_points[i].trigger_pin == -1)
+	    /* TRIGGER_PIN is a GPIO* mask.  Default value must be all-bits-clear.  */
+	    if(m_points[i].trigger_port == -1 || m_points[i].trigger_pin == 0)
                 continue;
 
             if(gpio_get(m_points[i].trigger_port, m_points[i].trigger_pin))
@@ -1297,6 +1306,8 @@ void exti_isr()
 	    gpio_clear (GPIOB, GPIO7);
 	  }
       }
+
+    gpio_clear (GPIOD, GPIO2);
 }
 
 void tim3_isr()
@@ -1348,12 +1359,10 @@ void adc_isr()
     register unsigned short got_full_result;
     unsigned char *next_sample;
 
-#if 0
-    nvic_disable_irq (NVIC_ADC_IRQ);
-
     /* Mark start of ISR.  */
-    gpio_set (GPIOB, GPIO11);
+    gpio_set (GPIOD, GPIO0);
 
+#if 1
     /* Get value of TIM5 counter.  */
     tim5_now = timer_get_counter (TIM5);
 
@@ -1384,6 +1393,9 @@ void adc_isr()
         if(adc_eoc(adcs[i]))
 	  {
             unsigned short val;
+
+	    gpio_set (GPIOD, GPIO1);
+	    gpio_clear (GPIOD, GPIO1);
 
             m_point = adc_to_mpoint[i];
             if(m_point == -1)
@@ -1416,9 +1428,6 @@ void adc_isr()
                 unsigned short v = mp->lastV;
                 unsigned p = c*v;
 		got_full_result = 0x4242;
-
-		/* Mark start of handling.  */
-		gpio_set (GPIOB, GPIO13);
 
 		// Copy current and voltage to DMA buffer.  Add the channel ID+1
 		// in the high 4 bits.
@@ -1457,7 +1466,7 @@ void adc_isr()
 	       - 8 MSbits I
 	       - 8 bits combined: 4 LSbits I followed by 4 MSbits V
 	       - 8 LSbits V. */
-#if 0
+#if 1
 	    next_sample[0] = (unsigned char) (tim5_now - previous_tim5_value);
 	    next_sample[1] = (unsigned char) ((mp->lastI >> 4) & 0xff);
 	    next_sample[2] = (unsigned char) (((mp->lastI & 0xf) << 4) | ((mp->lastV >> 8)  & 0xf));
@@ -1466,12 +1475,16 @@ void adc_isr()
             // Select odd or even channel
             chan[0] = mp->chans[(mp->idx&1)];
             adc_set_regular_sequence(adcs[i], 1, chan);
+
+	    // gpio_set (GPIOD, GPIO2);
+	    // gpio_clear (GPIOD, GPIO2);
+
             adc_enable_eoc_interrupt(adcs[i]);
 	  }
 	else
 	  {
 	    /* No data: enter an empty record, all zeroes.  */
-#if 0
+#if 1
 	    next_sample[0] = 0;
 	    next_sample[1] = 0;
 	    next_sample[2] = 0;
@@ -1479,7 +1492,7 @@ void adc_isr()
 #endif
 	  }
 
-#if 0
+#if 1
 	/* Advance to next sample.  */
 	next_sample += 4;
 	sample_data_size += 4;
@@ -1487,17 +1500,14 @@ void adc_isr()
 #endif
       }
 
-#if 0
-    /* Mark end of handling.  */
-    gpio_clear (GPIOB, GPIO13);
-
+#if 1
     /* Keep track of last timestamp.  */
     previous_tim5_value = tim5_value;
 
     /* Flip the buffer index if buffer is at full capacity.  */
     if (sample_data_size > 244)
       {
-	if (sample_count > 31)
+	if (sample_count > 63)
 	  error_condition ();
 
 	/* Store the sample count in the low 5 bits of TS.  */
@@ -1506,12 +1516,9 @@ void adc_isr()
 	sample_count = 0;
         whichone = 1 - whichone;
       }
-
-    /* Mark end of ISR.  */
-    gpio_clear (GPIOB, GPIO11);
-    /* Re-enable the IRQ.  */
-    nvic_enable_irq (NVIC_ADC_IRQ);
 #endif
+    /* Mark end of ISR.  */
+    gpio_clear (GPIOD, GPIO0);
 }
 
 int milliseconds = 0;
