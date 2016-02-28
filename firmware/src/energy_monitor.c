@@ -1370,14 +1370,17 @@ void adc_isr()
     got_full_result = 0x4141;
 
     /* Store the TIM5 reading at the start of processing.  */
-    /* Clear the low 5 bits of the TS to hold the sample count,
-       filled in once the frame is completely filled.  */
-    tim5_value = tim5_now & ~0x1f;
+    /* Clear the low 6 bits of the TS to hold the sample
+       count, filled in once the frame is full.  */
+    tim5_value = tim5_now & ~0x3f;
 
     /* If this is the start of a frame, store the TS from TIM5 at
        offset 0 in frame.   */
     if (sample_data_size == 0)
       {
+	/* The reference is the timestamp modulo 64 (6 LSbits
+	   cleared).  The longest delay between reference and first
+	   valid sample is 192 microseconds (256 - 64).  */
 	previous_tim5_value = tim5_value;
 	*((unsigned int *) tx_buffer[whichone]) = tim5_value;
 	sample_data_size += sizeof (unsigned int);
@@ -1510,8 +1513,10 @@ void adc_isr()
 	if (sample_count > 63)
 	  error_condition ();
 
-	/* Store the sample count in the low 5 bits of TS.  */
-	tx_buffer[whichone][3] |= sample_count;
+	/* Store the sample count in the low 8 bits of TS.  The six
+	   LSbits have been cleared at frame start, and sample count
+	   is known to be < 64.  */
+	tx_buffer[whichone][0] |= sample_count;
 	sample_data_size = 0;
 	sample_count = 0;
         whichone = 1 - whichone;
