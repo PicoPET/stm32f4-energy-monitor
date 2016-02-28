@@ -124,12 +124,12 @@ typedef struct {
    One buffer will be sent every 100 microseconds (3.5 microseconds
    xfer time for 128 bits, 4 microseconds for 144 bits).
 
-   The divide-by-4 is necessary to adjust for the 1/2-sysclk APB1 clock,
-   furter divided by 2 due to prescaler divisor being equal to 1.  The resulting
-   period (in cycles of 84 MHz APB1 clock) results in a frequency of 20 kHz
-   for I or V component in alternation, leading to a complete measurement being
-   available every 8400 APB1 cycles, or 100 microseconds.   */
-int tperiod = 168000000/4/20000;
+   The divide-by-2 is necessary to adjust for the 1/2-sysclk APB1 clock.
+   The resulting period (in cycles of 84 MHz APB1 clock) results in a
+   frequency of 20 kHz for I or V component in alternation, leading to
+   a complete measurement being available every 8400 APB1 cycles, or
+   100 microseconds.   */
+int tperiod = 168000000/2/20000;
 
 typedef struct {
     accumulated_data accum_data;
