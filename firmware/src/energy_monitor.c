@@ -1378,12 +1378,8 @@ void adc_isr()
        offset 0 in frame.   */
     if (sample_data_size == 0)
       {
-	/* The reference is the timestamp modulo 64 (6 LSbits
-	   cleared).  The longest delay between reference and first
-	   valid sample is 192 microseconds (256 - 64).  */
-	previous_tim5_value = tim5_value;
-	*((unsigned int *) tx_buffer[whichone]) = tim5_value;
-	sample_data_size += sizeof (unsigned int);
+	*((unsigned int *) tx_buffer[whichone]) = tim5_now;
+	sample_data_size = sizeof (unsigned int);
       }
 
     next_sample = tx_buffer[whichone] + sample_data_size;
@@ -1454,6 +1450,25 @@ void adc_isr()
                     a_data->peak_voltage = v;
                 if(c > a_data->peak_current)
                     a_data->peak_current = c;
+
+		/* Store the values in SPI frame.
+		   Format:
+		   - 4 bits channel ID (for readability in logs);
+		     channel ID is always nonzero, null value means
+		     invalid sample/unused slot.
+		   - 12 bits delta T
+		   - 16 bits current I
+		   - 16 bits current V. */
+
+		*((unsigned short *) &next_sample[0]) =
+		  (unsigned short) ((m_point + 1) << 12 | (tim5_now - previous_tim5_value));
+		*((unsigned short *) &next_sample[2]) = mp->lastI;
+		*((unsigned short *) &next_sample[4]) = mp->lastV;
+
+		/* Advance to next sample.  */
+		next_sample += 6;
+		sample_data_size += 6;
+		sample_count++;
 	      }
 
             mp->idx = 1-mp->idx;
@@ -1463,18 +1478,6 @@ void adc_isr()
             // suspect an odd timing bug, but only happens 1/10000000 times.
             unsigned char chan[1];
 
-	    /* Store the values in SPI frame.
-	       Format:
-	       - 8 bits delta T
-	       - 8 MSbits I
-	       - 8 bits combined: 4 LSbits I followed by 4 MSbits V
-	       - 8 LSbits V. */
-#if 1
-	    next_sample[0] = (unsigned char) (tim5_now - previous_tim5_value);
-	    next_sample[1] = (unsigned char) ((mp->lastI >> 4) & 0xff);
-	    next_sample[2] = (unsigned char) (((mp->lastI & 0xf) << 4) | ((mp->lastV >> 8)  & 0xf));
-	    next_sample[3] = (unsigned char) (mp->lastV & 0xff);
-#endif
             // Select odd or even channel
             chan[0] = mp->chans[(mp->idx&1)];
             adc_set_regular_sequence(adcs[i], 1, chan);
@@ -1484,39 +1487,21 @@ void adc_isr()
 
             adc_enable_eoc_interrupt(adcs[i]);
 	  }
-	else
-	  {
-	    /* No data: enter an empty record, all zeroes.  */
-#if 1
-	    next_sample[0] = 0;
-	    next_sample[1] = 0;
-	    next_sample[2] = 0;
-	    next_sample[3] = 0;
-#endif
-	  }
-
-#if 1
-	/* Advance to next sample.  */
-	next_sample += 4;
-	sample_data_size += 4;
-	sample_count++;
-#endif
       }
 
 #if 1
     /* Keep track of last timestamp.  */
-    previous_tim5_value = tim5_value;
+    previous_tim5_value = tim5_now;
 
-    /* Flip the buffer index if buffer is at full capacity.  */
-    if (sample_data_size > 244)
+    /* Flip the buffer index and reset sample counters if buffer might
+       exceed full capacity at next ISR.  */
+    if (sample_data_size > 256 - 18)
       {
-	if (sample_count > 63)
+	/* 43 samples is 252 bytes: with 4 bytes TS it fills a
+	   256-byte frame.  */
+	if (sample_count > 43)
 	  error_condition ();
 
-	/* Store the sample count in the low 8 bits of TS.  The six
-	   LSbits have been cleared at frame start, and sample count
-	   is known to be < 64.  */
-	tx_buffer[whichone][0] |= sample_count;
 	sample_data_size = 0;
 	sample_count = 0;
         whichone = 1 - whichone;
