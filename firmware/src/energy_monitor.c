@@ -1278,7 +1278,7 @@ void exti_isr()
 	    gpio_set (GPIOB, GPIO7);
 
 	    /* Set up transfer when we're selected as slave.  */
-	    spi_dma_transceive (tx_buffer[1 - whichone], 16, rx_buffer, 16);
+	    spi_dma_transceive (tx_buffer[1 - whichone], 256, rx_buffer, 256);
 
 	    /* Mark the end of the non-wait code.  */
 	    gpio_clear (GPIOB, GPIO7);
@@ -1462,6 +1462,10 @@ void adc_isr()
 
 		*((unsigned short *) &next_sample[0]) =
 		  (unsigned short) ((m_point + 1) << 12 | (tim5_now - previous_tim5_value));
+		/* If we got a sample, the reference for other samples
+		   in this ISR invocation must be advanced for the
+		   incremental TS to work.  */
+		previous_tim5_value = tim5_now;
 		*((unsigned short *) &next_sample[2]) = mp->lastI;
 		*((unsigned short *) &next_sample[4]) = mp->lastV;
 
