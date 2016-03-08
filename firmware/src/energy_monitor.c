@@ -421,7 +421,8 @@ static void usb_reset_cb()
     {
         m_points[i].running = 0;
         m_points[i].trigger_port = -1;
-        m_points[i].trigger_pin = -1;
+	/* TRIGGER_PIN is a GPIOn mask.  Default value must be all-bits-clear.  */
+	m_points[i].trigger_pin = 0;
         m_points[i].assigned_adc = -1;
     }
 }
@@ -597,7 +598,8 @@ int main(void)
     {
         m_points[i].assigned_adc = -1;
         m_points[i].trigger_port = -1;
-        m_points[i].trigger_pin = -1;
+	/* TRIGGER_PIN is a GPIOn mask.  Default value must be all-bits-clear.  */
+	m_points[i].trigger_pin = 0;
     }
 
     m_points[0].chans[0] = 2;
@@ -650,7 +652,8 @@ void exti_isr()
     {
         for(i = 0; i < 4; ++i)
         {
-            if(m_points[i].trigger_port == -1 || m_points[i].trigger_pin == -1)
+	    /* TRIGGER_PIN is a GPIOn mask: value 0 means mpoint is not enabled.  */
+            if(m_points[i].trigger_port == -1 || m_points[i].trigger_pin == 0)
                 continue;
 
             if(gpio_get(m_points[i].trigger_port, m_points[i].trigger_pin))
