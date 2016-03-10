@@ -1494,9 +1494,6 @@ void adc_isr()
       }
 
 #if 1
-    /* Keep track of last timestamp.  */
-    previous_tim5_value = tim5_now;
-
     /* Swap the buffer index and reset sample counters if buffer might
        exceed full capacity at next ISR.  */
     if (sample_data_size > TRANSFER_SIZE - (3 * 6))
