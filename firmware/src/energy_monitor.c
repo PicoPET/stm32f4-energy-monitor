@@ -578,16 +578,16 @@ void spi_setup ()
 
     /* Init slave on SPI1:
         - full_duplex mode
-	- assume clock low when idle (polarity 1, transition #1 is rising edge)
-	- make data stable on falling edge of clock (transition #0)
+	- assume clock low when idle (polarity 0, transition #0 is rising edge)
+	- make data stable on rising edge of clock (transition #0)
 	- send 8-bit frames
 	- send data in MSBit-first order.
 	*/
     /* 28.3.2.1 Set the DFF bit.  */
     spi_set_dff_8bit (SPI1);
     /* 28.3.2.2 Set the CPOL and CPHA bits.  */
-    spi_set_clock_polarity_1 (SPI1);
-    spi_set_clock_phase_1 (SPI1);
+    spi_set_clock_polarity_0 (SPI1);
+    spi_set_clock_phase_0 (SPI1);
     /* 28.3.2.3 The frame format (MSB-first or LSB-first)  */
     spi_send_msb_first (SPI1);
     spi_set_full_duplex_mode (SPI1);
@@ -726,7 +726,9 @@ typedef struct {
 } backlog_entry_t;
 #endif
 
+#define TRANSFER_SIZE 1520
 #define BACKLOG_DEPTH 4
+
 /* Backlog circular buffer.  */
 backlog_entry_t backlog[BACKLOG_DEPTH];
 int next_to_fill = 0;
@@ -752,17 +754,17 @@ typedef struct {
 
 /* ZC: Tx/Rx buffers for testing. */
 #ifdef USE_16BIT_TRANSFERS
-uint16_t tx_buffer[2][4] = {
+uint16_t tx_buffer[2][TRANSFER_SIZE] = {
   { 0xa5a5, 0x5a5a, 0xffff, 0x0000 },
   { 0x1234, 0x5678, 0x9abc, 0xdef0 }};
 
 uint16_t rx_buffer[4];
 #else
-uint8_t tx_buffer[2][256] __attribute__ ((aligned (256))) = {
+uint8_t tx_buffer[2][TRANSFER_SIZE] __attribute__ ((aligned (16))) = {
 	{ 0xff, 0xff, 0xff, 0xff, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0xb1, 0x9b, 0xb0, 0x0b },
 	{ 0x01, 0x10, 0xff, 0x00, 0x89, 0xab, 0xcd, 0xef, 0xb1, 0xab, 0x1a, 0xa5, 0x5a, 0xb0, 0x0b, 0xff }};
 
-uint8_t rx_buffer[256] __attribute__ ((aligned (256)));
+uint8_t rx_buffer[TRANSFER_SIZE] __attribute__ ((aligned (16)));
 #endif
 
 #ifdef USE_16BIT_TRANSFERS
@@ -1278,7 +1280,7 @@ void exti_isr()
 	    gpio_set (GPIOB, GPIO7);
 
 	    /* Set up transfer when we're selected as slave.  */
-	    spi_dma_transceive (tx_buffer[1 - whichone], 256, rx_buffer, 256);
+	    spi_dma_transceive (tx_buffer[1 - whichone], TRANSFER_SIZE, rx_buffer, TRANSFER_SIZE);
 
 	    /* Mark the end of the non-wait code.  */
 	    gpio_clear (GPIOB, GPIO7);
@@ -1327,8 +1329,8 @@ void exit(int a)
 void buffer_cleanup (int channel)
 {
 #if 1
-  memset (tx_buffer[0], 0, 256);
-  memset (tx_buffer[1], 0, 256);
+  memset (tx_buffer[0], 0, TRANSFER_SIZE);
+  memset (tx_buffer[1], 0, TRANSFER_SIZE);
 #endif
 }
 
@@ -1499,11 +1501,11 @@ void adc_isr()
 
     /* Flip the buffer index and reset sample counters if buffer might
        exceed full capacity at next ISR.  */
-    if (sample_data_size > 256 - 18)
+    if (sample_data_size > TRANSFER_SIZE - 18)
       {
-	/* 43 samples is 252 bytes: with 4 bytes TS it fills a
-	   256-byte frame.  */
-	if (sample_count > 43)
+	/* Do not exceed a sample count which with a 4 byte TS fills a
+	   TRANSFER_SIZE-byte frame.  */
+	if (sample_count > (TRANSFER_SIZE - 4) / 6)
 	  error_condition ();
 
 	sample_data_size = 0;
