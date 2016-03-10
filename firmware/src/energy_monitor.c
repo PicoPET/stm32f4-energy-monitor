@@ -129,7 +129,7 @@ typedef struct {
    frequency of 20 kHz for I or V component in alternation, leading to
    a complete measurement being available every 8400 APB1 cycles, or
    100 microseconds.   */
-#define FULL_SAMPLES_PER_SECOND 10000
+#define FULL_SAMPLES_PER_SECOND 40000
 int tperiod = 168000000/2/(2 * FULL_SAMPLES_PER_SECOND);
 
 typedef struct {
@@ -1362,9 +1362,6 @@ void adc_isr()
     register unsigned short got_full_result;
     unsigned char *next_sample;
 
-    /* Mark start of ISR.  */
-    gpio_set (GPIOD, GPIO0);
-
 #if 1
     /* Get value of TIM5 counter.  */
     tim5_now = timer_get_counter (TIM5);
@@ -1395,9 +1392,6 @@ void adc_isr()
         if(adc_eoc(adcs[i]))
 	  {
             unsigned short val;
-
-	    gpio_set (GPIOD, GPIO1);
-	    gpio_clear (GPIOD, GPIO1);
 
             m_point = adc_to_mpoint[i];
             if(m_point == -1)
@@ -1430,6 +1424,9 @@ void adc_isr()
                 unsigned short v = mp->lastV;
                 unsigned p = c*v;
 		got_full_result = 0x4242;
+
+		gpio_set (GPIOD, GPIO1);
+		gpio_clear (GPIOD, GPIO1);
 
 		// Copy current and voltage to DMA buffer.  Add the channel ID+1
 		// in the high 4 bits.
@@ -1500,10 +1497,14 @@ void adc_isr()
     /* Keep track of last timestamp.  */
     previous_tim5_value = tim5_now;
 
-    /* Flip the buffer index and reset sample counters if buffer might
+    /* Swap the buffer index and reset sample counters if buffer might
        exceed full capacity at next ISR.  */
-    if (sample_data_size > TRANSFER_SIZE - 18)
+    if (sample_data_size > TRANSFER_SIZE - (3 * 6))
       {
+	/* Mark buffer swap.  */
+	gpio_set (GPIOD, GPIO0);
+	gpio_clear (GPIOD, GPIO0);
+
 	/* Do not exceed a sample count which with a 4 byte TS fills a
 	   TRANSFER_SIZE-byte frame.  */
 	if (sample_count > (TRANSFER_SIZE - 4) / 6)
@@ -1515,7 +1516,6 @@ void adc_isr()
       }
 #endif
     /* Mark end of ISR.  */
-    gpio_clear (GPIOD, GPIO0);
 }
 
 int milliseconds = 0;
