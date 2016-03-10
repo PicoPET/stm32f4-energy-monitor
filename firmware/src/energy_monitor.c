@@ -129,7 +129,8 @@ typedef struct {
    frequency of 20 kHz for I or V component in alternation, leading to
    a complete measurement being available every 8400 APB1 cycles, or
    100 microseconds.   */
-int tperiod = 168000000/2/20000;
+#define FULL_SAMPLES_PER_SECOND 10000
+int tperiod = 168000000/2/(2 * FULL_SAMPLES_PER_SECOND);
 
 typedef struct {
     accumulated_data accum_data;
