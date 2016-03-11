@@ -729,7 +729,7 @@ typedef struct {
 
 #define TRANSFER_SIZE 1520
 #define BACKLOG_DEPTH 4
-#defien BUFFER_RING_SIZE 4
+#define BUFFER_RING_SIZE 4
 
 /* Backlog circular buffer.  */
 backlog_entry_t backlog[BACKLOG_DEPTH];
