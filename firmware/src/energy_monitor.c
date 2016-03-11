@@ -729,6 +729,7 @@ typedef struct {
 
 #define TRANSFER_SIZE 1520
 #define BACKLOG_DEPTH 4
+#defien BUFFER_RING_SIZE 4
 
 /* Backlog circular buffer.  */
 backlog_entry_t backlog[BACKLOG_DEPTH];
@@ -755,18 +756,24 @@ typedef struct {
 
 /* ZC: Tx/Rx buffers for testing. */
 #ifdef USE_16BIT_TRANSFERS
-uint16_t tx_buffer[2][TRANSFER_SIZE] = {
+uint16_t tx_buffer[BUFFER_RING_SIZE][TRANSFER_SIZE] = {
   { 0xa5a5, 0x5a5a, 0xffff, 0x0000 },
   { 0x1234, 0x5678, 0x9abc, 0xdef0 }};
 
-uint16_t rx_buffer[4];
+uint16_t rx_buffer[TRANSFER_SIZE];
 #else
-uint8_t tx_buffer[2][TRANSFER_SIZE] __attribute__ ((aligned (16))) = {
-	{ 0xff, 0xff, 0xff, 0xff, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0xb1, 0x9b, 0xb0, 0x0b },
+uint8_t tx_buffer[BUFFER_RING_SIZE][TRANSFER_SIZE] __attribute__ ((aligned (16))) = {
+	{ 0xff, 0xff, 0xff, 0xff, 0x0, 0x0, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0xb1, 0x9b, 0xb0, 0x0b },
 	{ 0x01, 0x10, 0xff, 0x00, 0x89, 0xab, 0xcd, 0xef, 0xb1, 0xab, 0x1a, 0xa5, 0x5a, 0xb0, 0x0b, 0xff }};
 
 uint8_t rx_buffer[TRANSFER_SIZE] __attribute__ ((aligned (16)));
 #endif
+
+/* Clean up buffers.  */
+void buffer_cleanup (int buffer_id)
+{
+  memset (tx_buffer[buffer_id], 0, TRANSFER_SIZE);
+}
 
 #ifdef USE_16BIT_TRANSFERS
 static int spi_dma_transceive(const uint16_t *tx_addr, int tx_count, uint16_t *rx_addr, int rx_count)
@@ -1325,15 +1332,6 @@ void exit(int a)
     while(1);
 }
 
-
-/* Clean up buffers.  */
-void buffer_cleanup (int channel)
-{
-#if 1
-  memset (tx_buffer[0], 0, TRANSFER_SIZE);
-  memset (tx_buffer[1], 0, TRANSFER_SIZE);
-#endif
-}
 
 /* TODO:
    - if sample count (sample data size) is zero, save current
