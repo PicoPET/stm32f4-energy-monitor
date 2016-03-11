@@ -30,6 +30,8 @@ Options:
                         msp-exp430fr5739
                         pic32mx250f128b
                         sam4lxplained
+                        lpcxpresso_lpc1115
+                        lpcxpresso_lpc1769
 
 """
 from docopt import docopt
