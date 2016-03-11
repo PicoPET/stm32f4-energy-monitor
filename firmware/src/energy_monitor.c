@@ -278,7 +278,9 @@ void start_measurement(int m_point)
     }
 
     /* Clean up the transmission buffers.  */
+#if 0
     buffer_cleanup (m_points[m_point].assigned_adc);
+#endif
 }
 
 void stop_measurement(int m_point)
@@ -616,10 +618,10 @@ unsigned int transceive_status;
 static void dma_int_enable(void)
 {
     /* SPI1 RX on DMA2 Channel 2 */
-    nvic_set_priority(NVIC_DMA2_STREAM2_IRQ, 0x10);
+    nvic_set_priority(NVIC_DMA2_STREAM2_IRQ, 0x20);
     nvic_enable_irq(NVIC_DMA2_STREAM2_IRQ);
     /* SPI1 TX on DMA2 Channel 3 */
-    nvic_set_priority(NVIC_DMA2_STREAM3_IRQ, 0x10);
+    nvic_set_priority(NVIC_DMA2_STREAM3_IRQ, 0x20);
     nvic_enable_irq(NVIC_DMA2_STREAM3_IRQ);
 }
 
@@ -727,7 +729,7 @@ typedef struct {
 } backlog_entry_t;
 #endif
 
-#define TRANSFER_SIZE 1520
+#define TRANSFER_SIZE 1536
 #define BACKLOG_DEPTH 4
 #define BUFFER_RING_SIZE 4
 
@@ -763,8 +765,8 @@ uint16_t tx_buffer[BUFFER_RING_SIZE][TRANSFER_SIZE] = {
 uint16_t rx_buffer[TRANSFER_SIZE];
 #else
 uint8_t tx_buffer[BUFFER_RING_SIZE][TRANSFER_SIZE] __attribute__ ((aligned (16))) = {
-	{ 0xff, 0xff, 0xff, 0xff, 0x0, 0x0, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0xb1, 0x9b, 0xb0, 0x0b },
-	{ 0x01, 0x10, 0xff, 0x00, 0x89, 0xab, 0xcd, 0xef, 0xb1, 0xab, 0x1a, 0xa5, 0x5a, 0xb0, 0x0b, 0xff }};
+	{ 0x0, 0x0, 0x0, 0x0, 0xa0, 0x0, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0xb1, 0x9b, 0xb0, 0x0b },
+	{ 0x0, 0x0, 0x0, 0x0, 0x50, 0x0, 0xcd, 0xef, 0xb1, 0xab, 0x1a, 0xa5, 0x5a, 0xb0, 0x0b, 0xff }};
 
 uint8_t rx_buffer[TRANSFER_SIZE] __attribute__ ((aligned (16)));
 #endif
@@ -1122,7 +1124,7 @@ void adc_setup()
     adc_eoc_after_each(ADC2);
     adc_eoc_after_each(ADC3);
 
-    nvic_set_priority(NVIC_ADC_IRQ, 0x20);
+    nvic_set_priority(NVIC_ADC_IRQ, 0x10);
 
     /* Do not enable ADC IRQs yet - wait until measurement starts.  */
 }
@@ -1287,7 +1289,9 @@ void exti_isr()
 	    /* Mark start of non-wait code.  */
 	    gpio_set (GPIOB, GPIO7);
 
-	    /* Set up transfer when we're selected as slave.  */
+	    /* Set up transfer when we're selected as slave.  Place a
+	       timestamp in the frame to indicate the send time. */
+	    *((unsigned int *) &tx_buffer[1 - whichone][4]) = timer_get_counter (TIM5);
 	    spi_dma_transceive (tx_buffer[1 - whichone], TRANSFER_SIZE, rx_buffer, TRANSFER_SIZE);
 
 	    /* Mark the end of the non-wait code.  */
@@ -1376,8 +1380,9 @@ void adc_isr()
        offset 0 in frame.   */
     if (sample_data_size == 0)
       {
-	*((unsigned int *) tx_buffer[whichone]) = tim5_now;
-	sample_data_size = sizeof (unsigned int);
+	*((unsigned int *) &tx_buffer[whichone][0]) = tim5_now;
+	/* Leave space for the DMA timestamp.  */
+	sample_data_size = 8;
       }
 
     next_sample = tx_buffer[whichone] + sample_data_size;
