@@ -959,7 +959,13 @@ void dma2_stream2_isr(void)
 
 	spi_disable_rx_dma(SPI1);
 
+	/* Disable stream, wait until disable is effective.  */
 	dma_disable_stream(DMA2, DMA_STREAM2);
+	while ((DMA_SCR (DMA2, DMA_STREAM2) & DMA_SxCR_EN) != 0);
+
+	/* Check number of elements remaining.  Fail if not zero.  */
+	if (DMA_SNDTR (DMA2, DMA_STREAM2) != 0)
+		error_condition ();
 
 	/* Decrement the status to indicate one of the transfers is complete */
 	transceive_status--;
@@ -972,9 +978,10 @@ void dma2_stream2_isr(void)
 		spi_dma_transceive (0, 0, 0, 0);
 	    else
 	      {
+#if 0
 		/* Wait until the FIFOs are flushed.  */
 		while (SPI_SR(SPI1) & SPI_SR_BSY);
-
+#endif
 		/* Turn green/amber LED according to whether the received data
 		   are correct or not.  */
 		if (rx_buffer[0] == 0xde
@@ -1019,9 +1026,6 @@ void dma2_stream3_isr(void)
 	dma_disable_stream (DMA2, DMA_STREAM3);
 	while ((DMA_SCR (DMA2, DMA_STREAM3) & DMA_SxCR_EN) != 0);
 
-	/* Place a 0 in the Tx buffer.  */
-	SPI_DR (SPI1) = 0x0;
-
 	/* Clear the Transfer Complete interrupt flag again after disable.  */
 	if ((DMA2_LISR & DMA_LISR_TCIF3) != 0) {
 		DMA2_LIFCR |= DMA_LIFCR_CTCIF3;
@@ -1039,9 +1043,10 @@ void dma2_stream3_isr(void)
 	/* If no transfers are under way, re-enable the ADC interrupts.  */
 	if (transceive_status == 0)
 	  {
+#if 0
 	    /* Wait until the FIFOs are flushed.  */
 	    while (SPI_SR(SPI1) & SPI_SR_BSY);
-
+#endif
 	    /* Check for backlog.  If present, trigger the next transfer.  */
 	    if (backlog_used > 0)
 		spi_dma_transceive (0, 0, 0, 0);
