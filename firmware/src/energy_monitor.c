@@ -729,14 +729,17 @@ typedef struct {
 } backlog_entry_t;
 #endif
 
-#define TRANSFER_SIZE 1536
+#define TRANSFER_SIZE (8 * 1536)
 #define BACKLOG_DEPTH 4
 #define BUFFER_RING_SIZE 4
 
 /* Backlog circular buffer.  */
 backlog_entry_t backlog[BACKLOG_DEPTH];
-int next_to_fill = 0;
+int next_to_fill = 1;		/* Start filling past the
+				   next buffer to be sent.  */
 int next_to_send = 0;
+int buffer_being_sent = -1;
+int next_to_clean = -1;
 
 /* Number of backlog entries.  */
 int backlog_used = 0;
@@ -771,10 +774,42 @@ uint8_t tx_buffer[BUFFER_RING_SIZE][TRANSFER_SIZE] __attribute__ ((aligned (16))
 uint8_t rx_buffer[TRANSFER_SIZE] __attribute__ ((aligned (16)));
 #endif
 
+/* Buffer state data.  */
+typedef enum {
+  STATE_EMPTY = 0,
+  STATE_FILLING,
+  STATE_VALID,
+  STATE_SENDING,
+  STATE_SENT
+} buffer_state_t;
+
+buffer_state_t buffer_state[BUFFER_RING_SIZE] = { STATE_EMPTY, STATE_EMPTY, STATE_EMPTY, STATE_EMPTY };
+
+/* Buffer ring actions.  */
+#define BUFFER_GET_NEXT(buf)  ((buf + 1) % BUFFER_RING_SIZE)
+#define BUFFER_GET_PREV(buf)  ((buf - 1) % BUFFER_RING_SIZE)
+#define BUFFER_ADVANCE(buf)   do { buf = BUFFER_GET_NEXT(buf); } while (0)
+
 /* Clean up buffers.  */
 void buffer_cleanup (int buffer_id)
 {
-  memset (tx_buffer[buffer_id], 0, TRANSFER_SIZE);
+  if (buffer_state[buffer_id] == STATE_EMPTY)
+    /* Nothing to do.  */
+    return;
+  else if (buffer_state[buffer_id] == STATE_SENT)
+    {
+      /* Buffer can be cleaned up.  */
+      int i;
+      unsigned int *ptr = (unsigned int *) tx_buffer[buffer_id];
+
+      for (i = 0; i < TRANSFER_SIZE/4; i++)
+	*ptr++ = 0;
+
+      buffer_state[buffer_id] = STATE_EMPTY;
+    }
+  else
+    /* Cleanup in other states is not allowed.  */
+    error_condition;
 }
 
 #ifdef USE_16BIT_TRANSFERS
@@ -1037,7 +1072,22 @@ void dma2_stream3_isr(void)
 
 	//spi_set_nss_high (SPI1);
 
-	/* Decrement the status to indicate one of the transfers is complete */
+	/* Do buffer bookkeeping.  */
+	buffer_state[buffer_being_sent] = STATE_SENT;
+
+	/* If there's some lag (there are more valid buffers),
+	   schedule OLD next_to_send for cleanup and advance
+	   next_to_send to next valid buffer.  Otherwise, the
+	   "next-to-send" buffer remains unchanged.  */
+	if (buffer_state[BUFFER_GET_NEXT (next_to_send)] == STATE_VALID)
+	  {
+	    next_to_clean = buffer_being_sent;
+	    BUFFER_ADVANCE (next_to_send);
+	  }
+	buffer_being_sent = -1;
+
+	/* Decrement the status to indicate one of the transfers is
+	   complete.  */
 	transceive_status--;
 
 	/* If no transfers are under way, re-enable the ADC interrupts.  */
@@ -1220,6 +1270,10 @@ int main(void)
     m_points[3].chans[0] = 8;
     m_points[3].chans[1] = 14;
 
+    /* Clean up all transferbuffers.  */
+    for (i = 0; i < BUFFER_RING_SIZE; i++)
+      buffer_cleanup (i);
+
     dma_setup();
     adc_setup();
     spi_setup ();
@@ -1233,6 +1287,13 @@ int main(void)
     while (1)
     {
       usbd_poll(usbd_dev);
+
+      /* Clean up previously sent buffer if any.  Buffer is marked
+	 ready-for-cleanup by the ADC ISR.
+	 Do the cleanup in normal app context, not in any of the
+	 ISRs, to reduce ISR load.  */
+      if (next_to_clean != -1)
+	buffer_cleanup (next_to_clean);
     }
 }
 
@@ -1296,8 +1357,10 @@ void exti_isr()
 
 	    /* Set up transfer when we're selected as slave.  Place a
 	       timestamp in the frame to indicate the send time. */
-	    *((unsigned int *) &tx_buffer[1 - whichone][4]) = timer_get_counter (TIM5);
-	    spi_dma_transceive (tx_buffer[1 - whichone], TRANSFER_SIZE, rx_buffer, TRANSFER_SIZE);
+	    *((unsigned int *) &tx_buffer[next_to_send][4]) = timer_get_counter (TIM5);
+	    buffer_being_sent = next_to_send;
+	    buffer_state[next_to_send] = STATE_SENDING;
+	    spi_dma_transceive (tx_buffer[next_to_send], TRANSFER_SIZE, rx_buffer, TRANSFER_SIZE);
 
 	    /* Mark the end of the non-wait code.  */
 	    gpio_clear (GPIOB, GPIO7);
@@ -1366,15 +1429,11 @@ void adc_isr()
     int i;
     volatile unsigned int tim5_now;
     register unsigned short tim5_high, tim5_low;
-    register unsigned short got_full_result;
     unsigned char *next_sample;
 
 #if 1
     /* Get value of TIM5 counter.  */
     tim5_now = timer_get_counter (TIM5);
-
-    /* Assume no full result was collected.  */
-    got_full_result = 0x4141;
 
     /* Store the TIM5 reading at the start of processing.  */
     /* Clear the low 6 bits of the TS to hold the sample
@@ -1385,12 +1444,16 @@ void adc_isr()
        offset 0 in frame.   */
     if (sample_data_size == 0)
       {
-	*((unsigned int *) &tx_buffer[whichone][0]) = tim5_now;
+	/* Put buffer in FILLING state.  */
+	buffer_state[next_to_fill] = STATE_FILLING;
+
+	/* Store initial timestamp.  */
+	*((unsigned int *) &tx_buffer[next_to_fill][0]) = tim5_now;
 	/* Leave space for the DMA timestamp.  */
 	sample_data_size = 8;
       }
 
-    next_sample = tx_buffer[whichone] + sample_data_size;
+    next_sample = tx_buffer[next_to_fill] + sample_data_size;
 #endif
     for(i = 0; i < 3; ++i)
       {
@@ -1431,7 +1494,6 @@ void adc_isr()
 		unsigned short c = mp->lastI;
                 unsigned short v = mp->lastV;
                 unsigned p = c*v;
-		got_full_result = 0x4242;
 
 		gpio_set (GPIOD, GPIO1);
 		gpio_clear (GPIOD, GPIO1);
@@ -1515,9 +1577,17 @@ void adc_isr()
 	if (sample_count > (TRANSFER_SIZE - 4) / 6)
 	  error_condition ();
 
+	/* Do buffer bookeeping:
+	   - mark current acquisition buffer as valid
+	   - advance current acquisition buffer to next-in-ring UNLESS
+	     that buffer is being sent.  If so, raise error condition.  */
+	buffer_state[next_to_fill] = STATE_VALID;
+	BUFFER_ADVANCE (next_to_fill);
+	if (buffer_state[next_to_fill] == STATE_SENDING)
+	  error_condition();
+
 	sample_data_size = 0;
 	sample_count = 0;
-        whichone = 1 - whichone;
       }
 #endif
     /* Mark end of ISR.  */
