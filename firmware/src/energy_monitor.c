@@ -735,16 +735,14 @@ typedef struct {
 
 /* Backlog circular buffer.  */
 backlog_entry_t backlog[BACKLOG_DEPTH];
-int next_to_fill = 1;		/* Start filling past the
-				   next buffer to be sent.  */
-int next_to_send = 0;
-int buffer_being_sent = -1;
-int next_to_clean = -1;
+
+int next_to_fill = 0;		/* Start filling at first buffer in ring.  */
+int next_to_send = -1;		/* There's no buffer ready to be sent. */
+int buffer_being_sent = -1;	/* No buffer is being sent now. */
+int next_to_clean = -1;		/* No buffer to clean (yet). */
 
 /* Number of backlog entries.  */
 int backlog_used = 0;
-
-unsigned int whichone = 0;
 
 /* Structure type holding a single incremental record.  */
 typedef struct {
@@ -1428,7 +1426,6 @@ void adc_isr()
     const unsigned int adcs[3] = {ADC1, ADC2, ADC3};
     int i;
     volatile unsigned int tim5_now;
-    register unsigned short tim5_high, tim5_low;
     unsigned char *next_sample;
 
 #if 1
@@ -1441,7 +1438,7 @@ void adc_isr()
     tim5_value = tim5_now & ~0x3f;
 
     /* If this is the start of a frame, store the TS from TIM5 at
-       offset 0 in frame.   */
+       offset 0 in frame.  */
     if (sample_data_size == 0)
       {
 	/* Put buffer in FILLING state.  */
@@ -1449,6 +1446,8 @@ void adc_isr()
 
 	/* Store initial timestamp.  */
 	*((unsigned int *) &tx_buffer[next_to_fill][0]) = tim5_now;
+	previous_tim5_value = tim5_now;
+
 	/* Leave space for the DMA timestamp.  */
 	sample_data_size = 8;
       }
@@ -1462,7 +1461,7 @@ void adc_isr()
 
         if(adc_eoc(adcs[i]))
 	  {
-            unsigned short val;
+            unsigned short val, channel_id;
 
             m_point = adc_to_mpoint[i];
             if(m_point == -1)
@@ -1523,21 +1522,20 @@ void adc_isr()
 
 		/* Store the values in SPI frame.
 		   Format:
-		   - 4 bits channel ID (for readability in logs);
-		     channel ID is always nonzero, null value means
-		     invalid sample/unused slot.
-		   - 12 bits delta T
-		   - 16 bits current I
-		   - 16 bits current V. */
-
+		   - 16 bits delta T to accommodate large buffers
+		   - 4 bits channel ID (for readability) ORed with 12
+		     bits instantaneous I value.
+		   - 4 bits channel ID (for readability) ORed with 12
+		     bits instantaneous V value. */
+		channel_id = (m_point + 1) << 12;
 		*((unsigned short *) &next_sample[0]) =
-		  (unsigned short) ((m_point + 1) << 12 | (tim5_now - previous_tim5_value));
+		  (unsigned short) (tim5_now - previous_tim5_value);
 		/* If we got a sample, the reference for other samples
 		   in this ISR invocation must be advanced for the
 		   incremental TS to work.  */
 		previous_tim5_value = tim5_now;
-		*((unsigned short *) &next_sample[2]) = mp->lastI;
-		*((unsigned short *) &next_sample[4]) = mp->lastV;
+		*((unsigned short *) &next_sample[2]) = channel_id | c;
+		*((unsigned short *) &next_sample[4]) = channel_id | v;
 
 		/* Advance to next sample.  */
 		next_sample += 6;
@@ -1579,9 +1577,14 @@ void adc_isr()
 
 	/* Do buffer bookeeping:
 	   - mark current acquisition buffer as valid
+	   - if there was no buffer ready to send, set it to current
+	     acquisition buffer
 	   - advance current acquisition buffer to next-in-ring UNLESS
 	     that buffer is being sent.  If so, raise error condition.  */
 	buffer_state[next_to_fill] = STATE_VALID;
+	if (next_to_send == -1)
+	  next_to_send = next_to_fill;
+
 	BUFFER_ADVANCE (next_to_fill);
 	if (buffer_state[next_to_fill] == STATE_SENDING)
 	  error_condition();
