@@ -119,16 +119,12 @@ typedef struct {
     uint64_t current_time;
 } instant_data;
 
-/* Sample at 10kS/s (2 periods/sample), 1 out of 3 channels active for now.
-
-   One buffer will be sent every 100 microseconds (3.5 microseconds
-   xfer time for 128 bits, 4 microseconds for 144 bits).
+/* Sample at 40kS/s (2 periods/sample), 1 out of 3 channels active for now.
 
    The divide-by-2 is necessary to adjust for the 1/2-sysclk APB1 clock.
-   The resulting period (in cycles of 84 MHz APB1 clock) results in a
-   frequency of 20 kHz for I or V component in alternation, leading to
-   a complete measurement being available every 8400 APB1 cycles, or
-   100 microseconds.   */
+   The resulting period (in cycles of 84 MHz APB1 clock) controls the
+   sampling of I or V component in alternation, leading to a complete
+   measurement being available every 2 * tperiod cycles.  */
 #define FULL_SAMPLES_PER_SECOND 40000
 int tperiod = 168000000/2/(2 * FULL_SAMPLES_PER_SECOND);
 
@@ -1074,13 +1070,13 @@ void dma2_stream3_isr(void)
 	buffer_state[buffer_being_sent] = STATE_SENT;
 
 	/* If there's some lag (there are more valid buffers),
-	   schedule OLD next_to_send for cleanup and advance
+	   schedule OLD next_to_send for cleanup and set
 	   next_to_send to next valid buffer.  Otherwise, the
 	   "next-to-send" buffer remains unchanged.  */
-	if (buffer_state[BUFFER_GET_NEXT (next_to_send)] == STATE_VALID)
+	if (buffer_state[BUFFER_GET_NEXT (buffer_being_sent)] == STATE_VALID)
 	  {
 	    next_to_clean = buffer_being_sent;
-	    BUFFER_ADVANCE (next_to_send);
+	    next_to_send = BUFFER_GET_NEXT (buffer_being_sent);
 	  }
 	buffer_being_sent = -1;
 
@@ -1285,13 +1281,6 @@ int main(void)
     while (1)
     {
       usbd_poll(usbd_dev);
-
-      /* Clean up previously sent buffer if any.  Buffer is marked
-	 ready-for-cleanup by the ADC ISR.
-	 Do the cleanup in normal app context, not in any of the
-	 ISRs, to reduce ISR load.  */
-      if (next_to_clean != -1)
-	buffer_cleanup (next_to_clean);
     }
 }
 
@@ -1354,11 +1343,15 @@ void exti_isr()
 	    gpio_set (GPIOB, GPIO7);
 
 	    /* Set up transfer when we're selected as slave.  Place a
-	       timestamp in the frame to indicate the send time. */
-	    *((unsigned int *) &tx_buffer[next_to_send][4]) = timer_get_counter (TIM5);
-	    buffer_being_sent = next_to_send;
-	    buffer_state[next_to_send] = STATE_SENDING;
-	    spi_dma_transceive (tx_buffer[next_to_send], TRANSFER_SIZE, rx_buffer, TRANSFER_SIZE);
+	       timestamp in the frame to indicate the send time.
+	       Do not send anything if we do not have a valid buffer.  */
+	    if (next_to_send != -1)
+	      {
+		*((unsigned int *) &tx_buffer[next_to_send][4]) = timer_get_counter (TIM5);
+		buffer_being_sent = next_to_send;
+		buffer_state[next_to_send] = STATE_SENDING;
+		spi_dma_transceive (tx_buffer[next_to_send], TRANSFER_SIZE, rx_buffer, TRANSFER_SIZE);
+	      }
 
 	    /* Mark the end of the non-wait code.  */
 	    gpio_clear (GPIOB, GPIO7);
@@ -1574,6 +1567,8 @@ void adc_isr()
 	   TRANSFER_SIZE-byte frame.  */
 	if (sample_count > (TRANSFER_SIZE - 4) / 6)
 	  error_condition ();
+
+	memset (next_sample, 0, TRANSFER_SIZE - sample_data_size);
 
 	/* Do buffer bookeeping:
 	   - mark current acquisition buffer as valid
