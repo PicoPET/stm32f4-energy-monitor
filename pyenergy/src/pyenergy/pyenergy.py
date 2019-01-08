@@ -251,6 +251,7 @@ class EnergyMonitor(object):
                 warning("Could not access one of the boards")
                 warning(str(e))
             v = self.getVersion(d)
+            print "--> Got version information: {}" . format (v)
             if v < EnergyMonitor.baseVersion:
                 warning("Device attached with old firmware, cannot check if this is desired device")
                 continue
@@ -260,6 +261,7 @@ class EnergyMonitor(object):
                     error("You need to update the firmware on this board before you can use it")
                 continue
             s = self.getSerial(d)
+            print "--> Got serial number information."
 	    print "Current device = " + ':'.join (map (lambda l: '{:#x}'.format(ord(l[0])), list(s))) + ' ({:d} characters)' . format (len (s))
 
             if s == serial:
@@ -323,15 +325,19 @@ class EnergyMonitor(object):
             pass
 
         try:
+            print "==> trying C3 12 0 0 4..."
             b = dev.ctrl_transfer(0xc3, 12, 0, 0, 4)
         except usb.core.USBError as e:
             try:
+                print "==> trying C1 12 0 0 4..."
                 b = dev.ctrl_transfer(0xc1, 12, 0, 0, 4)
             except usb.core.USBError as e:
                 if e.errno == 32:
+                    print "!!! errno 32..."
                     return 0
                 raise
         version = unpack("=L", b)[0]
+        print "==> Version: " + str(version)
         return version
 
     # Get serial
@@ -529,7 +535,16 @@ class EnergyMonitor(object):
         """
 
         info("getMeasurement")
+        b = self.dev.ctrl_transfer(0xc3, 6, 1, 0, calcsize(EnergyMonitor.MeasurementData_packing))
+        print "Measurement data (" + str(len(b)) + " bytes, meas. point 1): " + str(b)
+        b = self.dev.ctrl_transfer(0xc3, 6, 2, 0, calcsize(EnergyMonitor.MeasurementData_packing))
+        print "Measurement data (" + str(len(b)) + " bytes, meas. point 2): " + str(b)
+        b = self.dev.ctrl_transfer(0xc3, 6, 3, 0, calcsize(EnergyMonitor.MeasurementData_packing))
+        print "Measurement data (" + str(len(b)) + " bytes, meas. point 3): " + str(b)
+        b = self.dev.ctrl_transfer(0xc3, 6, 4, 0, calcsize(EnergyMonitor.MeasurementData_packing))
+        print "Measurement data (" + str(len(b)) + " bytes, meas. point 4): " + str(b)
         b = self.dev.ctrl_transfer(0xc3, 6, int(m_point), 0, calcsize(EnergyMonitor.MeasurementData_packing))
+        print "Measurement data (" + str(len(b)) + " bytes, meas. point " + str (m_point) + "): " + str(b)
         u = EnergyMonitor.MeasurementData._make(unpack(EnergyMonitor.MeasurementData_packing, b))
 
         info(u)
