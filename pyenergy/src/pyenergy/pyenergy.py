@@ -242,7 +242,7 @@ class EnergyMonitor(object):
 
     def __init__(self, serial="EE00"):
         devs = self.getBoards()
-        print "Got {} boards." . format (len(devs))
+        print "Got {} board(s)." . format (len(devs))
         sdevs = []
         for d in devs:
             try:
