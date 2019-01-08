@@ -15,6 +15,11 @@
 #include <libopencm3/stm32/exti.h>
 #include <libopencm3/stm32/pwr.h>
 
+// Define the configuration information here: the static initialisation seems
+// to be sloppy with GCC 5.2 and rev. D boards.
+#define VERSION_NUMBER 14
+#define SERIAL_NUMBER "EE00"
+
 // USB Code
 
 static const struct usb_device_descriptor dev = {
@@ -119,13 +124,13 @@ typedef struct {
     uint64_t current_time;
 } instant_data;
 
-/* Sample at 40kS/s (2 periods/sample), 1 out of 3 channels active for now.
+/* Sample at 50kS/s (2 periods/sample), 1 out of 3 channels active for now.
 
    The divide-by-2 is necessary to adjust for the 1/2-sysclk APB1 clock.
    The resulting period (in cycles of 84 MHz APB1 clock) controls the
    sampling of I or V component in alternation, leading to a complete
    measurement being available every 2 * tperiod cycles.  */
-#define FULL_SAMPLES_PER_SECOND 40000
+#define FULL_SAMPLES_PER_SECOND 50000
 int tperiod = 168000000/2/(2 * FULL_SAMPLES_PER_SECOND);
 
 typedef struct {
@@ -165,7 +170,7 @@ usbd_device *usbd_dev;
 
 uint8_t control_buffer[128] __attribute__((aligned (16)));
 
-unsigned versionNumber=14;
+static unsigned int versionNumber;
 
 /////////////////////////////////////////////////////////////////////
 
@@ -284,16 +289,16 @@ void stop_measurement(int m_point)
     m_points[m_point].running = 0;
     m_points[m_point].number_of_runs++;
 
-    gpio_clear (GPIOD, GPIO14);
-
     switch(m_points[m_point].assigned_adc)
     {
         case 0: adc_off(ADC1); break;
         case 1: adc_off(ADC2); break;
         case 2: adc_off(ADC3); break;
         case -1:
+	    gpio_set (GPIOD, GPIO14);
             error_condition(); return;
         default:
+	    gpio_set (GPIOD, GPIO15);
             error_condition(); return;
     }
 
@@ -1214,6 +1219,8 @@ int main(void)
 {
     int c_started=0, n, cpy, i, offset=0;
     short s;
+
+    versionNumber = VERSION_NUMBER;
 
     rcc_clock_setup_hse_3v3(&hse_8mhz_3v3[CLOCK_3V3_168MHZ]);
 

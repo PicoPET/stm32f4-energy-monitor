@@ -285,7 +285,7 @@ class EnergyMonitor(object):
         self.measurement_params[4] = {'resistor':0.5, 'gain':50, 'vref':3}
 
         # Use samples per second to compute the actual tperiod.
-        self.samplesPerSecond = 40000
+        self.samplesPerSecond = 50000
         # Equal to tperiod in the firmware.  Two tperiods are required to produce one sample.
         self.samplePeriod = 168000000/2/(self.samplesPerSecond * 2)
 
