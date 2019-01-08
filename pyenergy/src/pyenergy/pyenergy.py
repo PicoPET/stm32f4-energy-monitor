@@ -237,7 +237,7 @@ class EnergyMonitor(object):
     # The boards did not use to have a version associated with them, the first
     # version is version 10 (thus if we have an error getting the version we
     # assume the board is older than version 10).
-    newestVersion = 13
+    newestVersion = 14
     baseVersion = 10
 
     def __init__(self, serial="EE00"):
@@ -255,7 +255,7 @@ class EnergyMonitor(object):
                 warning("Device attached with old firmware, cannot check if this is desired device")
                 continue
 
-            if v < 13:
+            if v < EnergyMonitor.newestVersion:
                 if usb.util.get_string(d, 3).encode("utf8","ignore") == serial:
                     error("You need to update the firmware on this board before you can use it")
                 continue
